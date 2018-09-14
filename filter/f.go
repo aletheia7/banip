@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"fmt"
 	"github.com/BurntSushi/toml"
+	"github.com/aletheia7/gogroup"
 	"github.com/aletheia7/sd"
 	"path"
 	"regexp"
@@ -13,7 +14,9 @@ import (
 	"text/template"
 )
 
-var j = sd.New()
+var (
+	j = sd.New()
+)
 
 const (
 	ipv4var = `{{.Ipv4}}`
@@ -21,6 +24,7 @@ const (
 )
 
 type Filter struct {
+	gg       *gogroup.Group
 	Name     string
 	Enabled  bool
 	Action   string
@@ -29,23 +33,63 @@ type Filter struct {
 	Testdata [][]byte
 }
 
-func New(fn string) (*Filter, error) {
+func New(gg *gogroup.Group, fn string) (*Filter, error) {
 	if ext := path.Ext(fn); ext != ".toml" {
 		e := fmt.Errorf("missing toml file: %v", fn)
 		j.Err(e)
 		return nil, e
 	}
-	conf := &Filter{
+	o := &Filter{
+		gg:       gg,
 		Name:     strings.Split(path.Base(fn), ".toml")[0],
 		Re:       make([]*regexp.Regexp, 0),
 		Testdata: [][]byte{},
 	}
-	_, err := toml.DecodeFile(fn, conf)
+	_, err := toml.DecodeFile(fn, o)
 	if err != nil {
 		j.Err("decode:", err)
 		return nil, err
 	}
-	return conf, nil
+	go o.run()
+	return o, nil
+}
+
+func (o *Filter) run() {
+	key := o.gg.Register()
+	defer o.gg.Unregister(key)
+	for {
+		select {
+		case <-o.gg.Done():
+			return
+		}
+	}
+}
+
+func (o *Filter) do_test() {
+	// tdod
+	matched := 0
+	total := 0
+	// for t := range src {
+	// 	select {
+	// 	case <-gg.Done():
+	// 	default:
+	// 		total++
+	// 		for _, re := range conf.Re {
+	// 			b := re.Expand(nil, ipv4b, t, re.FindSubmatchIndex(t))
+	// 			if b == nil {
+	// 				if *pmissed {
+	// 					j.Infof("missed: %s\n", t)
+	// 				}
+	// 			} else {
+	// 				matched++
+	// 				if *pmatched {
+	// 					j.Infof("matched: %s\n", b)
+	// 				}
+	// 			}
+	// 		}
+	// 	}
+	// }
+	j.Infof("matched: %v, missed: %v, total: %v\n", matched, total-matched, total)
 }
 
 func (o *Filter) UnmarshalTOML(data interface{}) error {

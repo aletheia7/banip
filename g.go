@@ -33,9 +33,11 @@ var (
 	wlip     = flag.String("wlip", "", "whitelist IP and exit")
 	blip     = flag.String("blip", "", "blacklist IP and exit")
 	rmip     = flag.String("rmip", "", "remove IP and exit")
+	qip      = flag.String("qip", "", "query IP in datbase and exit")
 	rbl      = flag.String("rbl", "", "query rbls with IP and exit")
 	device   = flag.String("device", "", "required netdev device; i.e. eth0, br0, enp2s0")
-	sqlite   = flag.String("sqlite", "banip.sqlite", "will be made when not exists")
+	sqlite   = flag.String("sqlite", "banip.sqlite", "if not exist: will be made")
+	toml_dir = flag.String("toml", "", "toml directory, default: <user home>/toml")
 	gg       = gogroup.New(gogroup.Add_signals(gogroup.Unix))
 	ipv4b    = []byte{36, 105, 112, 118, 52} // $ipv4
 	load_f2b = flag.String("load-f2b", "", "load <full path>/fail2ban.sqlite3 and exit")
@@ -52,6 +54,7 @@ func main() {
 		j = sd.New(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
 		if len(*device) == 0 {
 			j.Err("missing device", *device)
+			flag.PrintDefaults()
 			return
 		}
 		t, err := nft.New_table(`netdev`, `filter`, `banip`, *device)
@@ -73,18 +76,19 @@ func main() {
 		go load_fail2ban()
 	case 0 < len(*test):
 		j.Info("test:", *test)
-		conf, err := filter.New(*test)
-		if err != nil {
-			return
-		}
-		src, err := journal(conf)
-		if err != nil {
-			return
-		}
-		go do_test(conf, src)
+		// conf, err := filter.New(gg, *test)
+		// if err != nil {
+		// 	return
+		// }
+		// src, err := journal(conf)
+		// if err != nil {
+		// 	return
+		// }
+		// todo
+		return
 	case 0 < len(*testdata):
 		j.Info("testdata:", *testdata)
-		conf, err := filter.New(*testdata)
+		conf, err := filter.New(gg, *testdata)
 		if err != nil {
 			return
 		}
@@ -100,7 +104,9 @@ func main() {
 				}
 			}
 		}()
-		go do_test(conf, src)
+		// todo
+		return
+		// go do_test(conf, src)
 	default:
 		if len(*device) == 0 {
 			j.Err("missing device", *device)
@@ -160,11 +166,9 @@ func server() {
 	bl = nil
 }
 
-// create sql db
-
 // tasks
-// load tomls
-// load/unload nftables
+// load/go tomls
+// exec journalctl and pub to tomls
 // get -t(s) for journalctl and start journalctl
 func get_database() *sql.DB {
 	u, err := user.Current()
@@ -334,33 +338,6 @@ func do_rbl() {
 			j.Info(h, s)
 		}
 	}
-}
-
-func do_test(conf *filter.Filter, src chan []byte) {
-	defer gg.Cancel()
-	matched := 0
-	total := 0
-	for t := range src {
-		select {
-		case <-gg.Done():
-		default:
-			total++
-			for _, re := range conf.Re {
-				b := re.Expand(nil, ipv4b, t, re.FindSubmatchIndex(t))
-				if b == nil {
-					if *pmissed {
-						j.Infof("missed: %s\n", t)
-					}
-				} else {
-					matched++
-					if *pmatched {
-						j.Infof("matched: %s\n", b)
-					}
-				}
-			}
-		}
-	}
-	j.Infof("matched: %v, missed: %v, total: %v\n", matched, total-matched, total)
 }
 
 type Stime time.Time
