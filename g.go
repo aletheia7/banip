@@ -1,3 +1,5 @@
+// Copyright 2018 aletheia7. All rights reserved. Use of this source code is
+// governed by a BSD-2-Clause license that can be found in the LICENSE file.
 package main
 
 import (
@@ -16,25 +18,30 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/user"
 	"strings"
+	"time"
 )
 
 var (
-	j = sd.New()
-	// j        = sd.New(sd.Set_default_writer_stdout(), sd.Set_default_disable_journal(true))
-	testdata = flag.String("testdata", "", "path to toml, use testdata")
-	test     = flag.String("test", "", "path to toml, use journalctl")
-	test_nft = flag.Bool("testnft", false, "add gobanip")
+	j        = sd.New()
+	testdata = flag.String("testdata", "", "run path to toml, use testdata and exit")
+	test     = flag.String("test", "", "run path to toml, use journalctl and exit")
+	test_nft = flag.Bool("testnft", false, "add banip")
 	pmatched = flag.Bool("pmatched", false, "print matched w/ -test")
 	pmissed  = flag.Bool("pmissed", false, "print missed w/ -test")
-	wl       = flag.String("wl", "", "whitelist IP")
-	rml      = flag.String("rml", "", "remove from list")
-	rbl      = flag.String("rbl", "", "query rbls")
+	wlip     = flag.String("wlip", "", "whitelist IP and exit")
+	blip     = flag.String("blip", "", "blacklist IP and exit")
+	rmip     = flag.String("rmip", "", "remove IP and exit")
+	rbl      = flag.String("rbl", "", "query rbls with IP and exit")
 	device   = flag.String("device", "br0", "netdev device")
 	sqlite   = flag.String("sqlite", "banip.sqlite", "will be made when not exists")
 	gg       = gogroup.New(gogroup.Add_signals(gogroup.Unix))
 	ipv4b    = []byte{36, 105, 112, 118, 52} // $ipv4
+	load_f2b = flag.String("load-f2b", "", "load <full path>/fail2ban.sqlite3 and exit")
 )
+
+const tsfmt = `2006-01-02 15:04:05-07:00`
 
 func main() {
 	flag.Parse()
@@ -42,7 +49,7 @@ func main() {
 	case 0 < len(*rbl):
 		go do_rbl()
 	case *test_nft:
-		t, err := nft.New_table(`netdev`, `filter`, `gobanip`, *device)
+		t, err := nft.New_table(`netdev`, `filter`, `banip`, *device)
 		if err != nil {
 			j.Err(err.Err)
 			j.Err(string(err.Output))
@@ -55,6 +62,9 @@ func main() {
 		}
 		t.Add_set(ip...)
 		return
+	case 0 < len(*load_f2b):
+		j.Info("load fail2ban")
+		go load_fail2ban()
 	case 0 < len(*test):
 		j.Info("test:", *test)
 		conf, err := filter.New(*test)
@@ -129,7 +139,7 @@ func server() {
 	}
 	j.Info("whitelist:", wl_ct)
 	j.Info("blacklist:", len(bl))
-	bset, e := nft.New_table(`netdev`, `filter`, `gobanip`, *device)
+	bset, e := nft.New_table(`netdev`, `filter`, `banip`, *device)
 	if e != nil {
 		j.Err(e)
 		return
@@ -137,6 +147,7 @@ func server() {
 	if 0 < len(bl) {
 		bset.Add_set(bl...)
 	}
+	bl = nil
 }
 
 // create sql db
@@ -146,13 +157,13 @@ func server() {
 // load/unload nftables
 // get -t(s) for journalctl and start journalctl
 func get_database() *sql.DB {
-	cwd, err := os.Getwd()
+	u, err := user.Current()
 	if err != nil {
 		j.Err(err)
 		gg.Cancel()
 		return nil
 	}
-	db, err := sql.Open("sqlite3", "file://"+cwd+"/"+*sqlite+"?"+strings.Join([]string{"_journal=wal", "_fk=1", "_timeout=30"}, `&`))
+	db, err := sql.Open("sqlite3", "file://"+u.HomeDir+"/"+*sqlite+"?"+strings.Join([]string{"_journal=wal", "_fk=1", "_timeout=30"}, `&`))
 	if err != nil {
 		j.Err(err)
 		return nil
@@ -189,6 +200,66 @@ create table if not exists ip (
 drop index if exists ip_i;
 create unique index ip_i on ip(ip, ban);
 -- vim: ts=2 expandtab`
+
+func load_fail2ban() {
+	defer gg.Cancel()
+	if _, err := os.Stat(*load_f2b); err != nil {
+		j.Err(err)
+		return
+	}
+	fdb, err := sql.Open("sqlite3", "file://"+*load_f2b+"?"+strings.Join([]string{"_journal=wal", "_fk=1", "_timeout=30"}, `&`))
+	if err != nil {
+		j.Err(err)
+		return
+	}
+	var jail string
+	var ip string
+	var ts time.Time
+	in, err := fdb.QueryContext(gg, "select jail, ip, max(timeofban) ts from bans group by jail, ip order by ip")
+	if err != nil {
+		j.Err(err)
+		return
+	}
+	defer fdb.Close()
+	db := get_database()
+	if db == nil {
+		return
+	}
+	defer db.Close()
+	opt := &sql.TxOptions{Isolation: sql.LevelSnapshot}
+	tx, err := db.BeginTx(gg, opt)
+	if err != nil {
+		j.Err(err)
+		return
+	}
+	insert, err := db.PrepareContext(gg, "insert or ignore into ip(ip, ban, ts, toml) values(:ip, 1, :ts, :toml)")
+	if err != nil {
+		j.Err(err)
+	}
+	ct := 0
+	for in.Next() {
+		if err = in.Scan(&jail, &ip, (*Stime)(&ts)); err != nil {
+			j.Err(err)
+			return
+		}
+		_, err := tx.StmtContext(gg, insert).ExecContext(gg, sql.Named("ip", ip), sql.Named("ts", ts.UTC().Format(tsfmt)), sql.Named("toml", "f2b"+jail))
+		if err != nil {
+			j.Err(err)
+			return
+		}
+		ct++
+	}
+	if err = in.Err(); err != nil {
+		j.Err(err)
+		tx.Rollback()
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		j.Err(err)
+		return
+	}
+	j.Info("jails:", ct)
+}
 
 func journal(conf *filter.Filter) (chan []byte, error) {
 	src := make(chan []byte, 256)
@@ -280,4 +351,16 @@ func do_test(conf *filter.Filter, src chan []byte) {
 		}
 	}
 	j.Infof("matched: %v, missed: %v, total: %v\n", matched, total-matched, total)
+}
+
+type Stime time.Time
+
+func (o *Stime) Scan(v interface{}) error {
+	switch t := v.(type) {
+	case int64:
+		*o = Stime(time.Unix(t, 0))
+	default:
+		return fmt.Errorf("unsupported type: %T: %v", t, t)
+	}
+	return nil
 }
