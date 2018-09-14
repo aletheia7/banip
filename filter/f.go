@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/BurntSushi/toml"
 	"github.com/aletheia7/gogroup"
+	"github.com/aletheia7/mbus"
 	"github.com/aletheia7/sd"
 	"path"
 	"regexp"
@@ -25,6 +26,7 @@ const (
 
 type Filter struct {
 	gg       *gogroup.Group
+	bus      *mbus.Bus
 	Name     string
 	Enabled  bool
 	Action   string
@@ -33,13 +35,14 @@ type Filter struct {
 	Testdata [][]byte
 }
 
-func New(gg *gogroup.Group, fn string) (*Filter, error) {
+func New(gg *gogroup.Group, bus *mbus.Bus, fn string) (*Filter, error) {
 	if ext := path.Ext(fn); ext != ".toml" {
 		e := fmt.Errorf("missing toml file: %v", fn)
 		j.Err(e)
 		return nil, e
 	}
 	o := &Filter{
+		bus:      bus,
 		gg:       gg,
 		Name:     strings.Split(path.Base(fn), ".toml")[0],
 		Re:       make([]*regexp.Regexp, 0),

@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/aletheia7/gogroup"
+	"github.com/aletheia7/mbus"
 	"github.com/aletheia7/sd"
 	_ "github.com/mattn/go-sqlite3"
 	"io"
@@ -88,7 +89,8 @@ func main() {
 		return
 	case 0 < len(*testdata):
 		j.Info("testdata:", *testdata)
-		conf, err := filter.New(gg, *testdata)
+		bus := mbus.New_bus(gg)
+		conf, err := filter.New(gg, bus, *testdata)
 		if err != nil {
 			return
 		}
