@@ -30,8 +30,6 @@ var (
 	testdata = flag.String("testdata", "", "run path to toml, use testdata and exit")
 	test     = flag.String("test", "", "run path to toml, use journalctl and exit")
 	test_nft = flag.Bool("testnft", false, "add banip")
-	pmatched = flag.Bool("pmatched", false, "print matched w/ -test")
-	pmissed  = flag.Bool("pmissed", false, "print missed w/ -test")
 	wlip     = flag.String("wlip", "", "whitelist IP and exit")
 	blip     = flag.String("blip", "", "blacklist IP and exit")
 	rmip     = flag.String("rmip", "", "remove IP and exit")
@@ -41,7 +39,6 @@ var (
 	sqlite   = flag.String("sqlite", "banip.sqlite", "if not exist: will be made")
 	toml_dir = flag.String("toml", "", "toml directory, default: <user home>/toml")
 	gg       = gogroup.New(gogroup.Add_signals(gogroup.Unix))
-	ipv4b    = []byte{36, 105, 112, 118, 52} // $ipv4
 	load_f2b = flag.String("load-f2b", "", "load <full path>/fail2ban.sqlite3 and exit")
 )
 
@@ -89,27 +86,16 @@ func main() {
 		// todo
 		return
 	case 0 < len(*testdata):
+		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
 		j.Info("testdata:", *testdata)
 		bus := mbus.New_bus(gg)
-		conf, err := filter.New(gg, bus, *testdata)
-		if err != nil {
-			return
+		if f, err := filter.New(gg, bus, *testdata); err == nil {
+			f.Testdata()
+		} else {
+			j.Err(err)
 		}
-		src := make(chan []byte, 1)
-		go func() {
-			defer close(src)
-			for _, b := range conf.Testdata {
-				select {
-				case <-gg.Done():
-					return
-				default:
-					src <- b
-				}
-			}
-		}()
-		// todo
+		gg.Cancel()
 		return
-		// go do_test(conf, src)
 	default:
 		if len(*device) == 0 {
 			j.Err("missing device", *device)
