@@ -1,0 +1,10 @@
+enabled = false
+syslog_identifier = ['auth']
+action = 'ban'
+re = [
+    '^pam_unix\(dovecot:auth\): authentication failure; logname= uid=\d+ euid=\d+ tty=dovecot ruser=\S+\srhost={{.Ipv4}}'
+] 
+testdata = [
+	 'pam_unix(dovecot:auth): authentication failure; logname= uid=0 euid=0 tty=dovecot ruser=orders rhost=127.0.0.1'
+	,'pam_unix(dovecot:auth): authentication failure; logname= uid=0 euid=0 tty=dovecot ruser=webmaster rhost=127.0.0.1  user=webmaster'
+]
