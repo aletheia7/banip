@@ -11,9 +11,7 @@ import (
 	"text/template"
 )
 
-var (
-	j = sd.New(sd.Set_default_writer_stdout(), sd.Set_default_disable_journal(true))
-)
+var j = sd.New()
 
 const (
 	ipv4var = `{{.Ipv4}}`

@@ -5,18 +5,23 @@ import (
 	"banip/nft"
 	"bufio"
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"github.com/aletheia7/gogroup"
 	"github.com/aletheia7/sd"
+	_ "github.com/mattn/go-sqlite3"
 	"io"
 	"net"
+	"os"
 	"os/exec"
+	"strings"
 )
 
 var (
-	j        = sd.New(sd.Set_default_writer_stdout(), sd.Set_default_disable_journal(true))
+	j = sd.New()
+	// j        = sd.New(sd.Set_default_writer_stdout(), sd.Set_default_disable_journal(true))
 	testdata = flag.String("testdata", "", "path to toml, use testdata")
 	test     = flag.String("test", "", "path to toml, use journalctl")
 	test_nft = flag.Bool("testnft", false, "add gobanip")
@@ -26,7 +31,7 @@ var (
 	rml      = flag.String("rml", "", "remove from list")
 	rbl      = flag.String("rbl", "", "query rbls")
 	device   = flag.String("device", "br0", "netdev device")
-	table    = flag.String("sqlite", ".config/ban/ban.sqlite", "ban.sqlite location")
+	sqlite   = flag.String("sqlite", "banip.sqlite", "will be made when not exists")
 	gg       = gogroup.New(gogroup.Add_signals(gogroup.Unix))
 	ipv4b    = []byte{36, 105, 112, 118, 52} // $ipv4
 )
@@ -90,13 +95,48 @@ func main() {
 func server() {
 	key := gg.Register()
 	defer gg.Unregister(key)
-	_, err := nft.New_table(`netdev`, `filter`, `gobanip`, *device)
+	db := get_database()
+	if db == nil {
+		return
+	}
+	// 4 byte string key
+	list := map[string]bool{}
+	rows, err := db.QueryContext(gg, "select ip, ban from ip")
 	if err != nil {
 		j.Err(err)
+		return
 	}
-	// list := map[net.IP]bool{}
-	// load wl/bl
-	// set table
+	var ip string
+	var ban int
+	bl := make([]string, 0, 1000)
+	wl_ct := 0
+	for rows.Next() {
+		if err = rows.Scan(&ip, &ban); err != nil {
+			j.Err(err)
+			return
+		}
+		if ban == 0 {
+			wl_ct++
+			list[net.ParseIP(ip).To4().String()] = false
+		} else {
+			bl = append(bl, ip)
+			list[net.ParseIP(ip).To4().String()] = true
+		}
+	}
+	if err = rows.Err(); err != nil {
+		j.Err(err)
+		return
+	}
+	j.Info("whitelist:", wl_ct)
+	j.Info("blacklist:", len(bl))
+	bset, e := nft.New_table(`netdev`, `filter`, `gobanip`, *device)
+	if e != nil {
+		j.Err(e)
+		return
+	}
+	if 0 < len(bl) {
+		bset.Add_set(bl...)
+	}
 }
 
 // create sql db
@@ -105,6 +145,50 @@ func server() {
 // load tomls
 // load/unload nftables
 // get -t(s) for journalctl and start journalctl
+func get_database() *sql.DB {
+	cwd, err := os.Getwd()
+	if err != nil {
+		j.Err(err)
+		gg.Cancel()
+		return nil
+	}
+	db, err := sql.Open("sqlite3", "file://"+cwd+"/"+*sqlite+"?"+strings.Join([]string{"_journal=wal", "_fk=1", "_timeout=30"}, `&`))
+	if err != nil {
+		j.Err(err)
+		return nil
+	}
+	var ct int64
+	err = db.QueryRowContext(gg, "select count(*) ct from sqlite_master where tbl_name='ip'").Scan(&ct)
+	switch err {
+	case nil:
+		if ct == 0 {
+			j.Info("making database")
+			if _, err := db.ExecContext(gg, schema); err != nil {
+				j.Err(err)
+				return nil
+			}
+		}
+	default:
+		if err != nil {
+			j.Err(err)
+			return nil
+		}
+	}
+	return db
+}
+
+var schema = `drop table if exists ip;
+create table if not exists ip (
+    ip text not null
+  , ban int not null check(ban in (0, 1))
+  , ts datetime not null
+  , toml text
+  , rbl text
+  , log text
+);
+drop index if exists ip_i;
+create unique index ip_i on ip(ip, ban);
+-- vim: ts=2 expandtab`
 
 func journal(conf *filter.Filter) (chan []byte, error) {
 	src := make(chan []byte, 256)
