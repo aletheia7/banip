@@ -34,7 +34,7 @@ var (
 	blip     = flag.String("blip", "", "blacklist IP and exit")
 	rmip     = flag.String("rmip", "", "remove IP and exit")
 	rbl      = flag.String("rbl", "", "query rbls with IP and exit")
-	device   = flag.String("device", "br0", "netdev device")
+	device   = flag.String("device", "", "required netdev device; i.e. eth0, br0, enp2s0")
 	sqlite   = flag.String("sqlite", "banip.sqlite", "will be made when not exists")
 	gg       = gogroup.New(gogroup.Add_signals(gogroup.Unix))
 	ipv4b    = []byte{36, 105, 112, 118, 52} // $ipv4
@@ -49,6 +49,11 @@ func main() {
 	case 0 < len(*rbl):
 		go do_rbl()
 	case *test_nft:
+		j = sd.New(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
+		if len(*device) == 0 {
+			j.Err("missing device", *device)
+			return
+		}
 		t, err := nft.New_table(`netdev`, `filter`, `banip`, *device)
 		if err != nil {
 			j.Err(err.Err)
@@ -63,6 +68,7 @@ func main() {
 		t.Add_set(ip...)
 		return
 	case 0 < len(*load_f2b):
+		j = sd.New(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
 		j.Info("load fail2ban")
 		go load_fail2ban()
 	case 0 < len(*test):
@@ -96,6 +102,10 @@ func main() {
 		}()
 		go do_test(conf, src)
 	default:
+		if len(*device) == 0 {
+			j.Err("missing device", *device)
+			return
+		}
 		go server()
 	}
 	defer gg.Wait()
