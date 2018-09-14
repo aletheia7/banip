@@ -1,0 +1,12 @@
+[submodule "vendor/github.com/aletheia7/gogroup"]
+	path = vendor/github.com/aletheia7/gogroup
+	url = https://github.com/aletheia7/gogroup.git
+[submodule "vendor/github.com/aletheia7/sd"]
+	path = vendor/github.com/aletheia7/sd
+	url = https://github.com/aletheia7/sd.git
+[submodule "vendor/github.com/BurntSushi/toml"]
+	path = vendor/github.com/BurntSushi/toml
+	url = https://github.com/BurntSushi/toml.git
+[submodule "vendor/github.com/mattn/go-sqlite3"]
+	path = vendor/github.com/mattn/go-sqlite3
+	url = https://github.com/mattn/go-sqlite3.git
