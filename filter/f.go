@@ -19,15 +19,15 @@ import (
 
 var (
 	j        = sd.New()
-	ipv4b    = []byte{36, 105, 112, 118, 52} // $ipv4
 	pmatched = flag.Bool("pmatched", false, "print matched w/ -test")
 	pmissed  = flag.Bool("pmissed", false, "print missed w/ -test")
 )
 
 const (
-	T_msg   = "msg"
+	T_test  = `test`
 	ipv4var = `{{.Ipv4}}`
 	ipv4re  = `(?P<ipv4>\d{1,3}(?:[.]\d{1,3}){3}){1}`
+	ipv4    = `$ipv4`
 )
 
 type Filter struct {
@@ -39,8 +39,10 @@ type Filter struct {
 	Action   string
 	Tag      []string
 	Re       []*regexp.Regexp
-	testdata [][]byte
+	testdata []string
 	subs     []string
+	matched  int
+	total    int
 }
 
 func New(gg *gogroup.Group, bus *mbus.Bus, fn string) (*Filter, error) {
@@ -55,7 +57,7 @@ func New(gg *gogroup.Group, bus *mbus.Bus, fn string) (*Filter, error) {
 		c:        make(chan *mbus.Msg, 256),
 		Name:     strings.Split(path.Base(fn), ".toml")[0],
 		Re:       make([]*regexp.Regexp, 0),
-		testdata: [][]byte{},
+		testdata: []string{},
 	}
 	_, err := toml.DecodeFile(fn, o)
 	if err != nil {
@@ -63,10 +65,10 @@ func New(gg *gogroup.Group, bus *mbus.Bus, fn string) (*Filter, error) {
 		return nil, err
 	}
 	o.subs = make([]string, 0, len(o.Tag)+1)
-	o.subs = append(o.subs, T_msg)
 	for _, t := range o.Tag {
 		o.subs = append(o.subs, t)
 	}
+	o.subs = append(o.subs, T_test)
 	o.bus.Subscribe(o.c, o.subs...)
 	go o.run()
 	return o, nil
@@ -82,37 +84,47 @@ func (o *Filter) run() {
 			return
 		case in := <-o.c:
 			switch in.Topic {
+			case T_test:
+				o.test(in)
 			}
 		}
 	}
 }
 
 func (o *Filter) Testdata() {
-	defer o.gg.Cancel()
-	matched := 0
-	total := 0
 	for _, t := range o.testdata {
-		select {
-		case <-o.gg.Done():
+		o.c <- mbus.New_msg(T_test, t)
+	}
+	o.c <- mbus.New_msg(T_test, nil)
+}
+
+func (o *Filter) test(in *mbus.Msg) {
+	select {
+	case <-o.gg.Done():
+		return
+	default:
+		switch t := in.Data.(type) {
+		case nil:
+			j.Infof("matched: %v, missed: %v, total: %v\n", o.matched, o.total-o.matched, o.total)
+			o.gg.Cancel()
 			return
-		default:
-			total++
+		case string:
+			o.total++
 			for _, re := range o.Re {
-				b := re.Expand(nil, ipv4b, t, re.FindSubmatchIndex(t))
-				if b == nil {
+				s := re.ExpandString(nil, ipv4, t, re.FindStringSubmatchIndex(t))
+				if s == nil {
 					if *pmissed {
 						j.Infof("missed: %s\n", t)
 					}
 				} else {
-					matched++
+					o.matched++
 					if *pmatched {
-						j.Infof("matched: %s\n", b)
+						j.Infof("matched: %s\n", s)
 					}
 				}
 			}
 		}
 	}
-	j.Infof("matched: %v, missed: %v, total: %v\n", matched, total-matched, total)
 }
 
 func (o *Filter) UnmarshalTOML(data interface{}) error {
@@ -178,13 +190,13 @@ func (o *Filter) UnmarshalTOML(data interface{}) error {
 			if !ok {
 				return fmt.Errorf("not an array:", k)
 			}
-			o.testdata = make([][]byte, 0, len(a))
+			o.testdata = make([]string, 0, len(a))
 			for i, dv := range a {
 				s, ok := dv.(string)
 				if !ok {
 					return fmt.Errorf("testdata[%v] is not a string:", i, dv)
 				}
-				o.testdata = append(o.testdata, []byte(s))
+				o.testdata = append(o.testdata, s)
 			}
 		default:
 			e := fmt.Errorf("unknown key: %v, v: %#v\n", k, v)

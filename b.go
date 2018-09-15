@@ -74,17 +74,16 @@ func main() {
 		j.Info("load fail2ban")
 		go load_fail2ban()
 	case 0 < len(*test):
+		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
 		j.Info("test:", *test)
-		// conf, err := filter.New(gg, *test)
-		// if err != nil {
-		// 	return
-		// }
-		// src, err := journal(conf)
-		// if err != nil {
-		// 	return
-		// }
-		// todo
-		return
+		bus := mbus.New_bus(gg)
+		if f, err := filter.New(gg, bus, *test); err == nil {
+			go journal(bus, true, f.Tag)
+		} else {
+			j.Err(err)
+			gg.Cancel()
+			return
+		}
 	case 0 < len(*testdata):
 		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
 		j.Info("testdata:", *testdata)
@@ -93,9 +92,9 @@ func main() {
 			f.Testdata()
 		} else {
 			j.Err(err)
+			gg.Cancel()
+			return
 		}
-		gg.Cancel()
-		return
 	default:
 		if len(*device) == 0 {
 			j.Err("missing device", *device)
@@ -264,32 +263,45 @@ func load_fail2ban() {
 	j.Info("jails:", ct)
 }
 
-func journal(conf *filter.Filter) (chan []byte, error) {
-	src := make(chan []byte, 256)
-	tag := make([]string, 0, len(conf.Tag)*2)
-	for _, t := range conf.Tag {
-		tag = append(tag, "-t", t)
+type m struct {
+	Tag     string `json :"SYSLOG_IDENTIFIER"`
+	Message string `json :"MESSAGE"`
+}
+
+func journal(bus *mbus.Bus, test bool, tag []string) {
+	tag_args := make([]string, 0, (len(tag)*2)+2)
+	tag_args = append(tag_args, "--output", "json")
+	for _, t := range tag {
+		tag_args = append(tag_args, "-t", t)
 	}
-	cmd := exec.CommandContext(gg, "journalctl", append([]string{""}, tag...)...)
+	cmd := exec.CommandContext(gg, "journalctl", tag_args...)
 	var e bytes.Buffer
 	rp, wp := io.Pipe()
 	cmd.Stdout = wp
 	cmd.Stderr = &e
 	if err := cmd.Start(); err != nil {
 		j.Err(err)
-		return nil, err
+		return
 	}
 	go func() {
+		if test {
+			defer func() {
+				bus.Pub(filter.T_test, nil)
+			}()
+		}
 		defer rp.Close()
-		defer close(src)
 		scanner := bufio.NewScanner(rp)
 		for scanner.Scan() {
-			var m map[string]interface{}
+			var m m
 			if err := json.NewDecoder(bytes.NewReader(scanner.Bytes())).Decode(&m); err != nil {
 				j.Err(err)
 				continue
 			}
-			src <- []byte(m["MESSAGE"].(string))
+			if test {
+				bus.Pub(filter.T_test, m.Message)
+			} else {
+				bus.Pub(m.Tag, m.Message)
+			}
 		}
 		if err := scanner.Err(); err != nil {
 			j.Err(err)
@@ -301,7 +313,7 @@ func journal(conf *filter.Filter) (chan []byte, error) {
 			j.Err(err, e.String())
 		}
 	}()
-	return src, nil
+	return
 }
 
 func do_rbl() {
