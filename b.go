@@ -54,6 +54,7 @@ func main() {
 	}
 	switch {
 	case 0 < len(*rbl):
+		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
 		go do_rbl()
 	case *test_nft:
 		j = sd.New(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())

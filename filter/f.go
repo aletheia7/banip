@@ -21,6 +21,7 @@ var (
 	j        = sd.New()
 	pmatched = flag.Bool("pmatched", false, "print matched w/ -test")
 	pmissed  = flag.Bool("pmissed", false, "print missed w/ -test")
+	pignored = flag.Bool("pignored", false, "print ignored w/ -test")
 )
 
 const (
@@ -46,10 +47,11 @@ type Filter struct {
 	Enabled    bool
 	Action     string
 	Tag        []string
-	Re         []*regexp.Regexp
+	Re, Ignore []*regexp.Regexp
 	testdata   []string
 	subs       []string
 	matched    int
+	ignored    int
 	total      int
 }
 
@@ -66,6 +68,7 @@ func New(gg *gogroup.Group, bus *mbus.Bus, fn string) (*Filter, error) {
 		c:        make(chan *mbus.Msg, 256),
 		Name:     strings.Split(path.Base(fn), ".toml")[0],
 		Re:       make([]*regexp.Regexp, 0),
+		Ignore:   make([]*regexp.Regexp, 0),
 		testdata: []string{},
 	}
 	_, err := toml.DecodeFile(fn, o)
@@ -137,7 +140,7 @@ func (o *Filter) test(in *mbus.Msg) {
 	default:
 		switch t := in.Data.(type) {
 		case nil:
-			j.Infof("matched: %v, missed: %v, total: %v\n", o.matched, o.total-o.matched, o.total)
+			j.Infof("matched: %v, ignored: %v, missed: %v, total: %v\n", o.matched, o.ignored, o.total-o.matched-o.ignored, o.total)
 			// Call parent to shutdown app gracefully
 			o.parent.Cancel()
 			return
@@ -145,16 +148,25 @@ func (o *Filter) test(in *mbus.Msg) {
 			o.total++
 			for _, re := range o.Re {
 				s := re.ExpandString(nil, ipv4, t, re.FindStringSubmatchIndex(t))
-				if s == nil {
-					if *pmissed {
-						j.Infof("missed: %s\n", t)
-					}
-				} else {
+				if s != nil {
 					o.matched++
 					if *pmatched {
-						j.Infof("matched: %s\n", s)
+						j.Infof("matched: %s %v\n", s, re.String())
 					}
+					return
 				}
+			}
+			for _, re := range o.Ignore {
+				if re.MatchString(t) {
+					o.ignored++
+					if *pignored {
+						j.Infof("ignored: %s\n", re.String())
+					}
+					return
+				}
+			}
+			if *pmissed {
+				j.Infof("missed: %s\n", t)
 			}
 		}
 	}
@@ -216,6 +228,23 @@ func (o *Filter) UnmarshalTOML(data interface{}) error {
 					o.Re = append(o.Re, re)
 				} else {
 					return fmt.Errorf("%v: %v", err, reb.String())
+				}
+			}
+		case "ignore":
+			a, ok := v.([]interface{})
+			if !ok {
+				return fmt.Errorf("not an array:", k)
+			}
+			o.Ignore = make([]*regexp.Regexp, 0, len(a))
+			for i, rev := range a {
+				s, ok := rev.(string)
+				if !ok {
+					return fmt.Errorf("re[%v] is not a string:", i, rev)
+				}
+				if ignore, err := regexp.Compile(s); err == nil {
+					o.Ignore = append(o.Ignore, ignore)
+				} else {
+					return fmt.Errorf("%v: %v", err, s)
 				}
 			}
 		case "testdata":
