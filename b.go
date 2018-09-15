@@ -16,6 +16,7 @@ import (
 	"github.com/aletheia7/mbus"
 	"github.com/aletheia7/sd"
 	_ "github.com/mattn/go-sqlite3"
+	"gogitver"
 	"io"
 	"net"
 	"os"
@@ -35,10 +36,13 @@ var (
 	rmip     = flag.String("rmip", "", "remove IP and exit")
 	qip      = flag.String("qip", "", "query IP in datbase and exit")
 	rbl      = flag.String("rbl", "", "query rbls with IP and exit")
+	rbls_in  = flag.String("rbls", "sbl-xbl.spamhaus.org,bl.spamcop.net,dnsbl.sorbs.net,dnsbl-1.uceprotect.net,dnsbl-2.uceprotect.net,dnsbl-3.uceprotect.net", "rbls: comma separted")
+	rbls     = []string{}
 	device   = flag.String("device", "", "required netdev device; i.e. eth0, br0, enp2s0")
 	sqlite   = flag.String("sqlite", "banip.sqlite", "if not exist: will be made")
 	toml_dir = flag.String("toml", "", "toml directory, default: <user home>/toml")
 	load_f2b = flag.String("load-f2b", "", "load <full path>/fail2ban.sqlite3 and exit")
+	ver      = flag.Bool("v", false, "version")
 	j        = sd.New()
 	gg       = gogroup.New(gogroup.Add_signals(gogroup.Unix))
 )
@@ -47,6 +51,12 @@ const tsfmt = `2006-01-02 15:04:05-07:00`
 
 func main() {
 	flag.Parse()
+	if *ver {
+		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
+		j.Info(gogitver.Git())
+		return
+	}
+	rbls = strings.Split(*rbls_in, ",")
 	u, err := user.Current()
 	if err != nil {
 		j.Err(err)
@@ -172,16 +182,34 @@ func server(home string) {
 			switch in.Topic {
 			case filter.T_bl:
 				if a, ok := in.Data.(*filter.Action); ok {
-					// 4 byte string
-					ip_bin := string(net.ParseIP(a.Ip).To4())
-					j.Err("debug:", in.Topic, a.Ip)
+					ip := net.ParseIP(a.Ip).To4()
+					ip_bin := string(ip)
 					if _, found := list[ip_bin]; !found {
 						list[ip_bin] = true
 						if err := bset.Add_set(a.Ip); err != nil {
 							j.Err(err)
 							return
 						}
-						if _, err := db.ExecContext(gg, "insert or ignore into ip(ip, ban, ts, toml, log) values(:ip, 1, :ts, :toml, :log)", sql.Named("ip", a.Ip), sql.Named("ts", time.Now().Format(tsfmt)), sql.Named("toml", a.Toml), sql.Named("log", a.Msg)); err != nil {
+						j.Info("blacklist:", a.Ip)
+						var rbl_found interface{} = nil
+						if a.Check_rbl {
+							c := make(chan interface{}, 2)
+							check_rbl(ip, false, c)
+							select {
+							case <-gg.Done():
+								return
+							case r := <-c:
+								switch t := r.(type) {
+								case *rbl_result:
+									if t.Found {
+										rbl_found = t.Rbl
+									}
+								default:
+									return
+								}
+							}
+						}
+						if _, err := db.ExecContext(gg, "insert or ignore into ip(ip, ban, ts, toml, rbl, log) values(:ip, 1, :ts, :toml, :rbl, :log)", sql.Named("ip", a.Ip), sql.Named("ts", time.Now().Format(tsfmt)), sql.Named("toml", a.Toml), sql.Named("rbl", rbl_found), sql.Named("log", a.Msg)); err != nil {
 							j.Err(err)
 							return
 						}
@@ -388,27 +416,66 @@ func journal(bus *mbus.Bus, test bool, tag []string) {
 	return
 }
 
+func check_rbl(ip net.IP, all bool, out chan interface{}) {
+	go func() {
+		defer func() {
+			out <- nil
+		}()
+		ip_rev := net.IP(make([]byte, len(ip.To4())))
+		copy(ip_rev, ip.To4())
+		for i, j := 0, len(ip_rev)-1; i < j; i, j = i+1, j-1 {
+			ip_rev[i], ip_rev[j] = ip_rev[j], ip_rev[i]
+		}
+		for _, h := range rbls {
+			select {
+			case <-gg.Done():
+				return
+			default:
+			}
+			a, err := net.LookupHost(ip_rev.String() + "." + h)
+			if err == nil {
+				if 0 < len(a) {
+					out <- &rbl_result{Rbl: h, Found: true}
+					if !all {
+						return
+					}
+				}
+			} else {
+				if strings.HasSuffix(err.Error(), "no such host") {
+					out <- &rbl_result{Rbl: h}
+					if !all {
+						return
+					}
+				} else {
+					j.Err(err)
+					continue
+				}
+			}
+		}
+	}()
+}
+
+type rbl_result struct {
+	Rbl   string
+	Found bool
+}
+
 func do_rbl() {
 	defer gg.Cancel()
-	ip := net.ParseIP(*rbl).To4()
-	for i, j := 0, len(ip)-1; i < j; i, j = i+1, j-1 {
-		ip[i], ip[j] = ip[j], ip[i]
-	}
-	for _, h := range []string{
-		ip.String() + ".sbl-xbl.spamhaus.org",
-		ip.String() + ".bl.spamcop.net",
-		ip.String() + ".dnsbl.sorbs.net",
-		ip.String() + ".dnsbl-1.uceprotect.net",
-		ip.String() + ".dnsbl-2.uceprotect.net",
-		ip.String() + ".dnsbl-3.uceprotect.net",
-	} {
-		a, err := net.LookupHost(h)
-		if err != nil {
-			j.Info(h, "not found")
-			continue
-		}
-		for _, s := range a {
-			j.Info(h, s)
+	ip := net.ParseIP(*rbl)
+	c := make(chan interface{}, len(rbls)+1)
+	check_rbl(ip, true, c)
+	for {
+		select {
+		case <-gg.Done():
+			return
+		case r := <-c:
+			switch t := r.(type) {
+			case *rbl_result:
+				j.Infof("rbls: %v : %v %v\n", ip.String(), t.Rbl, t.Found)
+			default:
+				return
+			}
 		}
 	}
 }

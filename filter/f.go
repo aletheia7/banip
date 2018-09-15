@@ -34,9 +34,10 @@ const (
 )
 
 type Action struct {
-	Toml string
-	Ip   string
-	Msg  string
+	Toml      string
+	Ip        string
+	Msg       string
+	Check_rbl bool
 }
 
 type Filter struct {
@@ -48,6 +49,7 @@ type Filter struct {
 	Action     string
 	Tag        []string
 	Re, Ignore []*regexp.Regexp
+	Use_rbl    bool
 	testdata   []string
 	subs       []string
 	matched    int
@@ -125,7 +127,7 @@ func (o *Filter) check(in *mbus.Msg) {
 		if msg, ok := in.Data.(string); ok {
 			for _, re := range o.Re {
 				if ip := re.ExpandString(nil, ipv4, msg, re.FindStringSubmatchIndex(msg)); ip != nil {
-					o.bus.Pub(T_bl, &Action{Toml: o.Name, Ip: string(ip), Msg: msg})
+					o.bus.Pub(T_bl, &Action{Toml: o.Name, Ip: string(ip), Msg: msg, Check_rbl: o.Use_rbl})
 					return
 				}
 			}
@@ -200,6 +202,12 @@ func (o *Filter) UnmarshalTOML(data interface{}) error {
 				}
 			default:
 				return fmt.Errorf("unknown syslog_identifier: %T %v", t, t)
+			}
+		case "use_rbl":
+			if t, ok := v.(bool); ok {
+				o.Use_rbl = t
+			} else {
+				return fmt.Errorf("unknown use_rbl: %T %v", t, t)
 			}
 		case "re":
 			a, ok := v.([]interface{})

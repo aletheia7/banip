@@ -1,4 +1,5 @@
 enabled = true 
+use_rbl = true
 syslog_identifier = ['auth']
 action = 'ban'
 re = [
