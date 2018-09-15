@@ -13,3 +13,6 @@
 [submodule "vendor/github.com/k-sone/critbitgo"]
 	path = vendor/github.com/k-sone/critbitgo
 	url = https://github.com/k-sone/critbitgo.git
+[submodule "vendor/github.com/aletheia7/mbus"]
+	path = vendor/github.com/aletheia7/mbus
+	url = https://github.com/aletheia7/mbus.git
