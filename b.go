@@ -21,12 +21,12 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"strings"
 	"time"
 )
 
 var (
-	j        = sd.New()
 	testdata = flag.String("testdata", "", "run path to toml, use testdata and exit")
 	test     = flag.String("test", "", "run path to toml, use journalctl and exit")
 	test_nft = flag.Bool("testnft", false, "add banip")
@@ -38,14 +38,20 @@ var (
 	device   = flag.String("device", "", "required netdev device; i.e. eth0, br0, enp2s0")
 	sqlite   = flag.String("sqlite", "banip.sqlite", "if not exist: will be made")
 	toml_dir = flag.String("toml", "", "toml directory, default: <user home>/toml")
-	gg       = gogroup.New(gogroup.Add_signals(gogroup.Unix))
 	load_f2b = flag.String("load-f2b", "", "load <full path>/fail2ban.sqlite3 and exit")
+	j        = sd.New()
+	gg       = gogroup.New(gogroup.Add_signals(gogroup.Unix))
 )
 
 const tsfmt = `2006-01-02 15:04:05-07:00`
 
 func main() {
 	flag.Parse()
+	u, err := user.Current()
+	if err != nil {
+		j.Err(err)
+		return
+	}
 	switch {
 	case 0 < len(*rbl):
 		go do_rbl()
@@ -72,7 +78,7 @@ func main() {
 	case 0 < len(*load_f2b):
 		j = sd.New(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
 		j.Info("load fail2ban")
-		go load_fail2ban()
+		go load_fail2ban(u.HomeDir)
 	case 0 < len(*test):
 		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
 		j.Info("test:", *test)
@@ -100,22 +106,22 @@ func main() {
 			j.Err("missing device", *device)
 			return
 		}
-		go server()
+		go server(u.HomeDir)
 	}
 	defer gg.Wait()
 	<-gg.Done()
 }
 
-func server() {
+func server(home string) {
 	key := gg.Register()
 	defer gg.Unregister(key)
-	db := get_database()
+	db := get_database(home)
 	if db == nil {
 		return
 	}
 	// 4 byte string key
 	list := map[string]bool{}
-	rows, err := db.QueryContext(gg, "select ip, ban from ip")
+	rows, err := db.QueryContext(gg, "select ip, ban from ip order by ip")
 	if err != nil {
 		j.Err(err)
 		return
@@ -152,20 +158,56 @@ func server() {
 		bset.Add_set(bl...)
 	}
 	bl = nil
+	bus := mbus.New_bus(gg)
+	c := make(chan *mbus.Msg, 256)
+	bus.Subscribe(c, filter.T_bl)
+	defer bus.Unsubscribe(c, filter.T_bl)
+	run_filter(bus, home)
+	for {
+		select {
+		case <-gg.Done():
+			return
+		case in := <-c:
+			j.Err("debug:", in.Topic, in.Data)
+		}
+	}
 }
 
-// tasks
-// load/go tomls
-// exec journalctl and pub to tomls
-// get -t(s) for journalctl and start journalctl
-func get_database() *sql.DB {
-	u, err := user.Current()
+func run_filter(bus *mbus.Bus, home string) {
+	td := filepath.Join(home, "toml", "*.toml")
+	if 0 < len(*toml_dir) {
+		td = filepath.Join(*toml_dir, "*.toml")
+	}
+	j.Info("toml:", td)
+	toml, err := filepath.Glob(td)
 	if err != nil {
 		j.Err(err)
-		gg.Cancel()
-		return nil
+		return
 	}
-	db, err := sql.Open("sqlite3", "file://"+u.HomeDir+"/"+*sqlite+"?"+strings.Join([]string{"_journal=wal", "_fk=1", "_timeout=30"}, `&`))
+	tag := map[string]bool{}
+	for _, p := range toml {
+		f, err := filter.New(gg, bus, p)
+		if err != nil {
+			j.Err(err)
+			return
+		}
+		if !f.Enabled {
+			f.Stop()
+			continue
+		}
+		for _, t := range f.Tag {
+			tag[t] = true
+		}
+	}
+	a := make([]string, 0, len(tag))
+	for s := range tag {
+		a = append(a, s)
+	}
+	journal(bus, false, a)
+}
+
+func get_database(home string) *sql.DB {
+	db, err := sql.Open("sqlite3", "file://"+home+"/"+*sqlite+"?"+strings.Join([]string{"_journal=wal", "_fk=1", "_timeout=30000"}, `&`))
 	if err != nil {
 		j.Err(err)
 		return nil
@@ -203,13 +245,13 @@ drop index if exists ip_i;
 create unique index ip_i on ip(ip, ban);
 -- vim: ts=2 expandtab`
 
-func load_fail2ban() {
+func load_fail2ban(home string) {
 	defer gg.Cancel()
 	if _, err := os.Stat(*load_f2b); err != nil {
 		j.Err(err)
 		return
 	}
-	fdb, err := sql.Open("sqlite3", "file://"+*load_f2b+"?"+strings.Join([]string{"_journal=wal", "_fk=1", "_timeout=30"}, `&`))
+	fdb, err := sql.Open("sqlite3", "file://"+*load_f2b+"?"+strings.Join([]string{"_journal=wal", "_fk=1", "_timeout=30000"}, `&`))
 	if err != nil {
 		j.Err(err)
 		return
@@ -223,7 +265,7 @@ func load_fail2ban() {
 		return
 	}
 	defer fdb.Close()
-	db := get_database()
+	db := get_database(home)
 	if db == nil {
 		return
 	}
@@ -264,13 +306,19 @@ func load_fail2ban() {
 }
 
 type m struct {
-	Tag     string `json :"SYSLOG_IDENTIFIER"`
-	Message string `json :"MESSAGE"`
+	Tag     string `json:"SYSLOG_IDENTIFIER"`
+	Message string `json:"MESSAGE"`
 }
 
 func journal(bus *mbus.Bus, test bool, tag []string) {
-	tag_args := make([]string, 0, (len(tag)*2)+2)
-	tag_args = append(tag_args, "--output", "json")
+	var tag_args []string
+	if test {
+		tag_args = make([]string, 0, (len(tag)*2)+2)
+		tag_args = append(tag_args, "--output", "json")
+	} else {
+		tag_args = make([]string, 0, (len(tag)*2)+3)
+		tag_args = append(tag_args, "-f", "--output", "json")
+	}
 	for _, t := range tag {
 		tag_args = append(tag_args, "-t", t)
 	}
@@ -294,7 +342,7 @@ func journal(bus *mbus.Bus, test bool, tag []string) {
 		for scanner.Scan() {
 			var m m
 			if err := json.NewDecoder(bytes.NewReader(scanner.Bytes())).Decode(&m); err != nil {
-				j.Err(err)
+				j.Err(err, scanner.Text())
 				continue
 			}
 			if test {

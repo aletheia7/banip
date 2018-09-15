@@ -1,0 +1,13 @@
+enabled = true
+syslog_identifier = ['testbanip']
+action = 'ban'
+re = [
+    '^\D+{{.Ipv4}}\D+$'
+] 
+testdata = [
+	  'blue127.0.0.2red'
+	, 'blue127.0.0.99red'
+]
+
+# Create some test data
+# for ((i=0; i < 10; i++)) do logger -ttestbanip "blue127.0.0.${i}red" ; done

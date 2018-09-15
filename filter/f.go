@@ -25,24 +25,26 @@ var (
 
 const (
 	T_test  = `test`
+	T_bl    = `bl`
+	T_wl    = `wl`
 	ipv4var = `{{.Ipv4}}`
 	ipv4re  = `(?P<ipv4>\d{1,3}(?:[.]\d{1,3}){3}){1}`
 	ipv4    = `$ipv4`
 )
 
 type Filter struct {
-	gg       *gogroup.Group
-	bus      *mbus.Bus
-	c        chan *mbus.Msg
-	Name     string
-	Enabled  bool
-	Action   string
-	Tag      []string
-	Re       []*regexp.Regexp
-	testdata []string
-	subs     []string
-	matched  int
-	total    int
+	parent, gg *gogroup.Group
+	bus        *mbus.Bus
+	c          chan *mbus.Msg
+	Name       string
+	Enabled    bool
+	Action     string
+	Tag        []string
+	Re         []*regexp.Regexp
+	testdata   []string
+	subs       []string
+	matched    int
+	total      int
 }
 
 func New(gg *gogroup.Group, bus *mbus.Bus, fn string) (*Filter, error) {
@@ -52,7 +54,8 @@ func New(gg *gogroup.Group, bus *mbus.Bus, fn string) (*Filter, error) {
 		return nil, e
 	}
 	o := &Filter{
-		gg:       gg,
+		parent:   gg,
+		gg:       gogroup.New(gogroup.With_cancel(gg)),
 		bus:      bus,
 		c:        make(chan *mbus.Msg, 256),
 		Name:     strings.Split(path.Base(fn), ".toml")[0],
@@ -74,6 +77,11 @@ func New(gg *gogroup.Group, bus *mbus.Bus, fn string) (*Filter, error) {
 	return o, nil
 }
 
+// Call Stop() to shutdown
+func (o *Filter) Stop() {
+	o.gg.Cancel()
+}
+
 func (o *Filter) run() {
 	key := o.gg.Register()
 	defer o.gg.Unregister(key)
@@ -86,6 +94,8 @@ func (o *Filter) run() {
 			switch in.Topic {
 			case T_test:
 				o.test(in)
+			default:
+				o.check(in)
 			}
 		}
 	}
@@ -98,6 +108,21 @@ func (o *Filter) Testdata() {
 	o.c <- mbus.New_msg(T_test, nil)
 }
 
+func (o *Filter) check(in *mbus.Msg) {
+	select {
+	case <-o.gg.Done():
+		return
+	default:
+		if msg, ok := in.Data.(string); ok {
+			for _, re := range o.Re {
+				if ip := re.ExpandString(nil, ipv4, msg, re.FindStringSubmatchIndex(msg)); ip != nil {
+					o.bus.Pub(T_bl, string(ip))
+				}
+			}
+		}
+	}
+}
+
 func (o *Filter) test(in *mbus.Msg) {
 	select {
 	case <-o.gg.Done():
@@ -106,7 +131,8 @@ func (o *Filter) test(in *mbus.Msg) {
 		switch t := in.Data.(type) {
 		case nil:
 			j.Infof("matched: %v, missed: %v, total: %v\n", o.matched, o.total-o.matched, o.total)
-			o.gg.Cancel()
+			// Call parent to shutdown app gracefully
+			o.parent.Cancel()
 			return
 		case string:
 			o.total++
