@@ -137,10 +137,10 @@ func server(home string) {
 		}
 		if ban == 0 {
 			wl_ct++
-			list[net.ParseIP(ip).To4().String()] = false
+			list[string(net.ParseIP(ip).To4())] = false
 		} else {
 			bl = append(bl, ip)
-			list[net.ParseIP(ip).To4().String()] = true
+			list[string(net.ParseIP(ip).To4())] = true
 		}
 	}
 	if err = rows.Err(); err != nil {
@@ -168,7 +168,25 @@ func server(home string) {
 		case <-gg.Done():
 			return
 		case in := <-c:
-			j.Err("debug:", in.Topic, in.Data)
+			switch in.Topic {
+			case filter.T_bl:
+				if a, ok := in.Data.(*filter.Action); ok {
+					// 4 byte string
+					ip_bin := string(net.ParseIP(a.Ip).To4())
+					j.Err("debug:", in.Topic, a.Ip)
+					if _, found := list[ip_bin]; !found {
+						list[ip_bin] = true
+						if err := bset.Add_set(a.Ip); err != nil {
+							j.Err(err)
+							return
+						}
+						if _, err := db.ExecContext(gg, "insert or ignore into ip(ip, ban, ts, toml, log) values(:ip, 1, :ts, :toml, :log)", sql.Named("ip", a.Ip), sql.Named("ts", time.Now().Format(tsfmt)), sql.Named("toml", a.Toml), sql.Named("log", a.Msg)); err != nil {
+							j.Err(err)
+							return
+						}
+					}
+				}
+			}
 		}
 	}
 }
@@ -358,7 +376,12 @@ func journal(bus *mbus.Bus, test bool, tag []string) {
 	go func() {
 		defer wp.Close()
 		if err := cmd.Wait(); err != nil {
-			j.Err(err, e.String())
+			select {
+			case <-gg.Done():
+				return
+			default:
+				j.Err(err, e.String())
+			}
 		}
 	}()
 	return

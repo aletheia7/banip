@@ -32,6 +32,12 @@ const (
 	ipv4    = `$ipv4`
 )
 
+type Action struct {
+	Toml string
+	Ip   string
+	Msg  string
+}
+
 type Filter struct {
 	parent, gg *gogroup.Group
 	bus        *mbus.Bus
@@ -116,7 +122,8 @@ func (o *Filter) check(in *mbus.Msg) {
 		if msg, ok := in.Data.(string); ok {
 			for _, re := range o.Re {
 				if ip := re.ExpandString(nil, ipv4, msg, re.FindStringSubmatchIndex(msg)); ip != nil {
-					o.bus.Pub(T_bl, string(ip))
+					o.bus.Pub(T_bl, &Action{Toml: o.Name, Ip: string(ip), Msg: msg})
+					return
 				}
 			}
 		}
