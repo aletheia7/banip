@@ -1,5 +1,8 @@
 [![](https://img.shields.io/badge/godoc-reference-blue.svg)](https://godoc.org/github.com/aletheia7/banip) 
 
+### Installation
+- Rapid development is happening and docs are on the way.
+
 #### License 
 
 Use of this source code is governed by a BSD-2-Clause license that can be found
