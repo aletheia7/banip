@@ -1,4 +1,4 @@
-enabled = true
+enabled = false 
 rbl_must = true 
 syslog_identifier = ['postfix/smtpd']
 action = 'ban'

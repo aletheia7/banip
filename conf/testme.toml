@@ -1,4 +1,4 @@
-enabled = true
+enabled = false 
 syslog_identifier = ['testbanip']
 action = 'ban'
 re = [

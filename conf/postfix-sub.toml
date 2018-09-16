@@ -1,5 +1,5 @@
 enabled = false
-rbl_must = false
+rbl_must = true
 syslog_identifier = ['postfix/submission/smtpd']
 action = 'ban'
 re = [
