@@ -144,7 +144,6 @@ func (o *Filter) check(in *mbus.Msg) {
 			for _, re := range o.Re {
 				if ip := re.ExpandString(nil, ipv4, msg, re.FindStringSubmatchIndex(msg)); ip != nil {
 					ipnet := net.ParseIP(string(ip))
-					j.Err(string(ip), ipnet)
 					if _, found := o.list.In_list(ipnet); found {
 						return
 					}
