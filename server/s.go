@@ -302,14 +302,7 @@ func Journal(gg *gogroup.Group, pub Pubor, test bool, tag []string) {
 	}()
 	go func() {
 		defer wp.Close()
-		if err := cmd.Wait(); err != nil {
-			select {
-			case <-gg.Done():
-				return
-			default:
-				j.Err(err, e.String())
-			}
-		}
+		cmd.Wait()
 	}()
 	return
 }
