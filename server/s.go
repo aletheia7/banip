@@ -163,7 +163,7 @@ func (o *Server) run() {
 						if err != nil {
 							j.Err(err)
 						}
-						j.Info("blacklist: %v %v %v %v", a.Toml, id, a.Ip, rbl_found)
+						j.Infof("blacklist: %v %v %v %v", a.Toml, id, a.Ip, rbl_found)
 					}
 				}
 			}
@@ -190,6 +190,7 @@ func (o *Server) run_filter(bus *mbus.Bus) {
 		j.Err(err)
 		return
 	}
+	enabled := false
 	tag := map[string]bool{}
 	for _, p := range toml {
 		f, err := filter.New(o.gg, bus, p, o)
@@ -201,6 +202,7 @@ func (o *Server) run_filter(bus *mbus.Bus) {
 			f.Stop()
 			continue
 		}
+		enabled = true
 		for _, t := range f.Tag {
 			tag[t] = true
 		}
@@ -208,6 +210,15 @@ func (o *Server) run_filter(bus *mbus.Bus) {
 	a := make([]string, 0, len(tag))
 	for s := range tag {
 		a = append(a, s)
+	}
+	if !enabled {
+		j.Warning("No filters are enabled")
+		j.Warning("No action will occur")
+		j.Warning(`Filters with "enabled = true" must be available`)
+		j.Warning("Execute: mkdir <directory>")
+		j.Warning("Copy & edit your favorite *.toml to your <directroy>")
+		j.Warning("Execute: systemctl restart banip")
+		j.Warning("Typical of a new installation 😊")
 	}
 	Journal(o.gg, bus, false, a)
 }
