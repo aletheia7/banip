@@ -154,11 +154,16 @@ func (o *Server) run() {
 								}
 							}
 						}
-						j.Info("blacklist:", a.Toml, a.Ip, rbl_found)
-						if _, err := o.db.ExecContext(o.gg, "insert or ignore into ip(ip, ban, ts, toml, rbl, log) values(:ip, 1, :ts, :toml, :rbl, :log)", sql.Named("ip", a.Ip), sql.Named("ts", time.Now().Format(tsfmt)), sql.Named("toml", a.Toml), sql.Named("rbl", rbl_found), sql.Named("log", a.Msg)); err != nil {
+						res, err := o.db.ExecContext(o.gg, "insert or ignore into ip(ip, ban, ts, toml, rbl, log) values(:ip, 1, :ts, :toml, :rbl, :log)", sql.Named("ip", a.Ip), sql.Named("ts", time.Now().Format(tsfmt)), sql.Named("toml", a.Toml), sql.Named("rbl", rbl_found), sql.Named("log", a.Msg))
+						if err != nil {
 							j.Err(err)
 							return
 						}
+						id, err := res.LastInsertId()
+						if err != nil {
+							j.Err(err)
+						}
+						j.Info("blacklist: %v %v %v %v", a.Toml, id, a.Ip, rbl_found)
 					}
 				}
 			}
