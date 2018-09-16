@@ -1,0 +1,10 @@
+enabled = true
+rbl_must = true 
+syslog_identifier = ['postfix/smtpd']
+action = 'ban'
+re = [
+  '^lost connection after AUTH from unknown\[{{.Ipv4}}\]$'
+] 
+testdata = [
+  'lost connection after AUTH from unknown[185.234.219.253]'
+]

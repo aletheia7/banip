@@ -60,9 +60,14 @@ type Filter struct {
 	matched_u map[string]bool
 	ignored   int
 	total     int
+	list      Get_it
 }
 
-func New(gg *gogroup.Group, bus *mbus.Bus, fn string) (*Filter, error) {
+type Get_it interface {
+	In_list(ip net.IP) (value, found bool)
+}
+
+func New(gg *gogroup.Group, bus *mbus.Bus, fn string, srv Get_it) (*Filter, error) {
 	if ext := path.Ext(fn); ext != ".toml" {
 		e := fmt.Errorf("missing toml file: %v", fn)
 		j.Err(e)
@@ -78,6 +83,7 @@ func New(gg *gogroup.Group, bus *mbus.Bus, fn string) (*Filter, error) {
 		Ignore:    make([]*regexp.Regexp, 0),
 		testdata:  []string{},
 		matched_u: map[string]bool{},
+		list:      srv,
 	}
 	_, err := toml.DecodeFile(fn, o)
 	if err != nil {
@@ -92,6 +98,10 @@ func New(gg *gogroup.Group, bus *mbus.Bus, fn string) (*Filter, error) {
 	o.bus.Subscribe(o.c, o.subs...)
 	go o.run()
 	return o, nil
+}
+
+func (o *Filter) Pub(topic string, data interface{}) {
+	o.c <- mbus.New_msg(topic, data)
 }
 
 // Call Stop() to shutdown
@@ -133,9 +143,14 @@ func (o *Filter) check(in *mbus.Msg) {
 		if msg, ok := in.Data.(string); ok {
 			for _, re := range o.Re {
 				if ip := re.ExpandString(nil, ipv4, msg, re.FindStringSubmatchIndex(msg)); ip != nil {
+					ipnet := net.ParseIP(string(ip))
+					j.Err(string(ip), ipnet)
+					if _, found := o.list.In_list(ipnet); found {
+						return
+					}
 					if o.Rbl_must {
 						c := make(chan interface{}, 2)
-						Check_rbl(o.gg, ip, false, c)
+						Check_rbl(o.gg, ipnet, false, c)
 						select {
 						case <-o.gg.Done():
 							return
@@ -172,14 +187,22 @@ func (o *Filter) test(in *mbus.Msg) {
 				s := re.ExpandString(nil, ipv4, t, re.FindStringSubmatchIndex(t))
 				if s != nil {
 					if o.Rbl_must {
+						ipnet := net.ParseIP(string(s))
+						if _, found := o.list.In_list(ipnet); found {
+							o.matched++
+							o.matched_u[string(s)] = true
+							if *pmatched {
+								j.Infof("matched: %s %v\n", s, re.String())
+							}
+							return
+						}
 						c := make(chan interface{}, 2)
-						Check_rbl(o.gg, s, false, c)
+						Check_rbl(o.gg, ipnet, false, c)
 						select {
 						case <-o.gg.Done():
 							return
 						case r := <-c:
 							if t, ok := r.(*Rbl_result); ok && t.Found {
-								j.Err("debug p", t.Rbl)
 								o.matched++
 								o.matched_u[string(s)] = true
 								if *pmatched {
