@@ -277,8 +277,8 @@ func Journal(gg *gogroup.Group, pub Pubor, test bool, tag []string) {
 		tag_args = make([]string, 0, (len(tag)*2)+2)
 		tag_args = append(tag_args, "--output", "json")
 	} else {
-		tag_args = make([]string, 0, (len(tag)*2)+3)
-		tag_args = append(tag_args, "-f", "--output", "json")
+		tag_args = make([]string, 0, (len(tag)*2)+4)
+		tag_args = append(tag_args, "-n", "all", "-f", "--output", "json")
 	}
 	for _, t := range tag {
 		tag_args = append(tag_args, "-t", t)

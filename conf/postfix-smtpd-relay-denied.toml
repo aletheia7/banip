@@ -1,0 +1,11 @@
+enabled = false 
+rbl_must = false 
+rbl_use = true
+syslog_identifier = ['postfix/smtpd']
+action = 'ban'
+re = [
+  '^NOQUEUE: reject: RCPT from unknown\[{{.Ipv4}}\]: 554 5.7.1 .*: Relay access denied; from=.* to=.* proto=ESMTP helo=.*$'
+] 
+testdata = [
+  'NOQUEUE: reject: RCPT from unknown[23.254.247.18]: 554 5.7.1 <1029mandaditos@gmail.com>: Relay access denied; from=<dbrunsonjn@petalpushers.org> to=<1029mandaditos@gmail.com> proto=ESMTP helo=<client-23-254-247-18.hostwindsdns.com>'
+]
