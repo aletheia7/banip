@@ -472,7 +472,7 @@ func do_rbl() {
 		case r := <-c:
 			switch t := r.(type) {
 			case *filter.Rbl_result:
-				j.Infof("rbls: %v : %v %v\n", ip.String(), t.Rbl, t.Found)
+				j.Info(ip.String(), t.Rbl, t.Found)
 			default:
 				return
 			}

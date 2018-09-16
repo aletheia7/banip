@@ -162,7 +162,7 @@ func (o *Filter) test(in *mbus.Msg) {
 	default:
 		switch t := in.Data.(type) {
 		case nil:
-			j.Infof("matched: %v (%v), ignored: %v, missed: %v, total: %v\n", o.matched, len(o.matched_u), o.ignored, o.total-o.matched-o.ignored, o.total)
+			j.Infof("total: matched: %v (%v), ignored: %v, missed: %v, total: %v\n", o.matched, len(o.matched_u), o.ignored, o.total-o.matched-o.ignored, o.total)
 			// Call parent to shutdown app gracefully
 			o.parent.Cancel()
 			return
@@ -171,12 +171,31 @@ func (o *Filter) test(in *mbus.Msg) {
 			for _, re := range o.Re {
 				s := re.ExpandString(nil, ipv4, t, re.FindStringSubmatchIndex(t))
 				if s != nil {
-					o.matched++
-					o.matched_u[string(s)] = true
-					if *pmatched {
-						j.Infof("matched: %s %v\n", s, re.String())
+					if o.Rbl_must {
+						c := make(chan interface{}, 2)
+						Check_rbl(o.gg, s, false, c)
+						select {
+						case <-o.gg.Done():
+							return
+						case r := <-c:
+							if t, ok := r.(*Rbl_result); ok && t.Found {
+								j.Err("debug p", t.Rbl)
+								o.matched++
+								o.matched_u[string(s)] = true
+								if *pmatched {
+									j.Infof("matched: %s %v\n", s, re.String())
+								}
+								return
+							}
+						}
+					} else {
+						o.matched++
+						o.matched_u[string(s)] = true
+						if *pmatched {
+							j.Infof("matched: %s %v\n", s, re.String())
+						}
+						return
 					}
-					return
 				}
 			}
 			for _, re := range o.Ignore {
