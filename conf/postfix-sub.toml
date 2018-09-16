@@ -1,0 +1,10 @@
+enabled = true 
+rbl_must = true
+syslog_identifier = ['postfix/submission/smtpd']
+action = 'ban'
+re = [
+	'^connect from .*\[{{.Ipv4}}\]$'
+] 
+testdata = [
+	'connect from worker-06.sfj.corp.censys.io[198.108.66.96]'
+]

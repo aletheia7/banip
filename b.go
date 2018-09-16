@@ -56,7 +56,7 @@ func main() {
 		j.Info(gogitver.Git())
 		return
 	}
-	rbls = strings.Split(*rbls_in, ",")
+	filter.Rbls = strings.Split(*rbls_in, ",")
 	u, err := user.Current()
 	if err != nil {
 		j.Err(err)
@@ -194,13 +194,13 @@ func server(home string) {
 						var rbl_found interface{} = nil
 						if a.Check_rbl {
 							c := make(chan interface{}, 2)
-							check_rbl(ip, false, c)
+							filter.Check_rbl(gg, ip, false, c)
 							select {
 							case <-gg.Done():
 								return
 							case r := <-c:
 								switch t := r.(type) {
-								case *rbl_result:
+								case *filter.Rbl_result:
 									if t.Found {
 										rbl_found = t.Rbl
 									}
@@ -416,62 +416,62 @@ func journal(bus *mbus.Bus, test bool, tag []string) {
 	return
 }
 
-func check_rbl(ip net.IP, all bool, out chan interface{}) {
-	go func() {
-		defer func() {
-			out <- nil
-		}()
-		ip_rev := net.IP(make([]byte, len(ip.To4())))
-		copy(ip_rev, ip.To4())
-		for i, j := 0, len(ip_rev)-1; i < j; i, j = i+1, j-1 {
-			ip_rev[i], ip_rev[j] = ip_rev[j], ip_rev[i]
-		}
-		for _, h := range rbls {
-			select {
-			case <-gg.Done():
-				return
-			default:
-			}
-			a, err := net.LookupHost(ip_rev.String() + "." + h)
-			if err == nil {
-				if 0 < len(a) {
-					out <- &rbl_result{Rbl: h, Found: true}
-					if !all {
-						return
-					}
-				}
-			} else {
-				if strings.HasSuffix(err.Error(), "no such host") {
-					out <- &rbl_result{Rbl: h}
-					if !all {
-						return
-					}
-				} else {
-					j.Err(err)
-					continue
-				}
-			}
-		}
-	}()
-}
-
-type rbl_result struct {
-	Rbl   string
-	Found bool
-}
+// func check_rbl(ip net.IP, all bool, out chan interface{}) {
+// 	go func() {
+// 		defer func() {
+// 			out <- nil
+// 		}()
+// 		ip_rev := net.IP(make([]byte, len(ip.To4())))
+// 		copy(ip_rev, ip.To4())
+// 		for i, j := 0, len(ip_rev)-1; i < j; i, j = i+1, j-1 {
+// 			ip_rev[i], ip_rev[j] = ip_rev[j], ip_rev[i]
+// 		}
+// 		for _, h := range rbls {
+// 			select {
+// 			case <-gg.Done():
+// 				return
+// 			default:
+// 			}
+// 			a, err := net.LookupHost(ip_rev.String() + "." + h)
+// 			if err == nil {
+// 				if 0 < len(a) {
+// 					out <- &rbl_result{Rbl: h, Found: true}
+// 					if !all {
+// 						return
+// 					}
+// 				}
+// 			} else {
+// 				if strings.HasSuffix(err.Error(), "no such host") {
+// 					out <- &rbl_result{Rbl: h}
+// 					if !all {
+// 						return
+// 					}
+// 				} else {
+// 					j.Err(err)
+// 					continue
+// 				}
+// 			}
+// 		}
+// 	}()
+// }
+//
+// type rbl_result struct {
+// 	Rbl   string
+// 	Found bool
+// }
 
 func do_rbl() {
 	defer gg.Cancel()
 	ip := net.ParseIP(*rbl)
 	c := make(chan interface{}, len(rbls)+1)
-	check_rbl(ip, true, c)
+	filter.Check_rbl(gg, ip, true, c)
 	for {
 		select {
 		case <-gg.Done():
 			return
 		case r := <-c:
 			switch t := r.(type) {
-			case *rbl_result:
+			case *filter.Rbl_result:
 				j.Infof("rbls: %v : %v %v\n", ip.String(), t.Rbl, t.Found)
 			default:
 				return

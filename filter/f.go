@@ -11,6 +11,7 @@ import (
 	"github.com/aletheia7/gogroup"
 	"github.com/aletheia7/mbus"
 	"github.com/aletheia7/sd"
+	"net"
 	"path"
 	"regexp"
 	"strings"
@@ -22,6 +23,7 @@ var (
 	pmatched = flag.Bool("pmatched", false, "print matched w/ -test")
 	pmissed  = flag.Bool("pmissed", false, "print missed w/ -test")
 	pignored = flag.Bool("pignored", false, "print ignored w/ -test")
+	Rbls     = []string{}
 )
 
 const (
@@ -38,23 +40,26 @@ type Action struct {
 	Ip        string
 	Msg       string
 	Check_rbl bool
+	Rbl       interface{}
 }
 
 type Filter struct {
-	parent, gg *gogroup.Group
-	bus        *mbus.Bus
-	c          chan *mbus.Msg
-	Name       string
-	Enabled    bool
-	Action     string
-	Tag        []string
-	Re, Ignore []*regexp.Regexp
-	Use_rbl    bool
-	testdata   []string
-	subs       []string
-	matched    int
-	ignored    int
-	total      int
+	parent, gg        *gogroup.Group
+	bus               *mbus.Bus
+	c                 chan *mbus.Msg
+	Name              string
+	Enabled           bool
+	Action            string
+	Tag               []string
+	Re, Ignore        []*regexp.Regexp
+	Rbl_use, Rbl_must bool
+	bool
+	testdata  []string
+	subs      []string
+	matched   int
+	matched_u map[string]bool
+	ignored   int
+	total     int
 }
 
 func New(gg *gogroup.Group, bus *mbus.Bus, fn string) (*Filter, error) {
@@ -64,14 +69,15 @@ func New(gg *gogroup.Group, bus *mbus.Bus, fn string) (*Filter, error) {
 		return nil, e
 	}
 	o := &Filter{
-		parent:   gg,
-		gg:       gogroup.New(gogroup.With_cancel(gg)),
-		bus:      bus,
-		c:        make(chan *mbus.Msg, 256),
-		Name:     strings.Split(path.Base(fn), ".toml")[0],
-		Re:       make([]*regexp.Regexp, 0),
-		Ignore:   make([]*regexp.Regexp, 0),
-		testdata: []string{},
+		parent:    gg,
+		gg:        gogroup.New(gogroup.With_cancel(gg)),
+		bus:       bus,
+		c:         make(chan *mbus.Msg, 256),
+		Name:      strings.Split(path.Base(fn), ".toml")[0],
+		Re:        make([]*regexp.Regexp, 0),
+		Ignore:    make([]*regexp.Regexp, 0),
+		testdata:  []string{},
+		matched_u: map[string]bool{},
 	}
 	_, err := toml.DecodeFile(fn, o)
 	if err != nil {
@@ -127,8 +133,22 @@ func (o *Filter) check(in *mbus.Msg) {
 		if msg, ok := in.Data.(string); ok {
 			for _, re := range o.Re {
 				if ip := re.ExpandString(nil, ipv4, msg, re.FindStringSubmatchIndex(msg)); ip != nil {
-					o.bus.Pub(T_bl, &Action{Toml: o.Name, Ip: string(ip), Msg: msg, Check_rbl: o.Use_rbl})
-					return
+					if o.Rbl_must {
+						c := make(chan interface{}, 2)
+						Check_rbl(o.gg, ip, false, c)
+						select {
+						case <-o.gg.Done():
+							return
+						case r := <-c:
+							if t, ok := r.(*Rbl_result); ok && t.Found {
+								o.bus.Pub(T_bl, &Action{Toml: o.Name, Ip: string(ip), Msg: msg, Rbl: t.Rbl})
+								return
+							}
+						}
+					} else {
+						o.bus.Pub(T_bl, &Action{Toml: o.Name, Ip: string(ip), Msg: msg, Check_rbl: o.Rbl_use})
+						return
+					}
 				}
 			}
 		}
@@ -142,7 +162,7 @@ func (o *Filter) test(in *mbus.Msg) {
 	default:
 		switch t := in.Data.(type) {
 		case nil:
-			j.Infof("matched: %v, ignored: %v, missed: %v, total: %v\n", o.matched, o.ignored, o.total-o.matched-o.ignored, o.total)
+			j.Infof("matched: %v (%v), ignored: %v, missed: %v, total: %v\n", o.matched, len(o.matched_u), o.ignored, o.total-o.matched-o.ignored, o.total)
 			// Call parent to shutdown app gracefully
 			o.parent.Cancel()
 			return
@@ -152,6 +172,7 @@ func (o *Filter) test(in *mbus.Msg) {
 				s := re.ExpandString(nil, ipv4, t, re.FindStringSubmatchIndex(t))
 				if s != nil {
 					o.matched++
+					o.matched_u[string(s)] = true
 					if *pmatched {
 						j.Infof("matched: %s %v\n", s, re.String())
 					}
@@ -203,11 +224,17 @@ func (o *Filter) UnmarshalTOML(data interface{}) error {
 			default:
 				return fmt.Errorf("unknown syslog_identifier: %T %v", t, t)
 			}
-		case "use_rbl":
+		case "rbl_use":
 			if t, ok := v.(bool); ok {
-				o.Use_rbl = t
+				o.Rbl_use = t
 			} else {
-				return fmt.Errorf("unknown use_rbl: %T %v", t, t)
+				return fmt.Errorf("unknown rbl_use: %T %v", t, t)
+			}
+		case "rbl_must":
+			if t, ok := v.(bool); ok {
+				o.Rbl_must = t
+			} else {
+				return fmt.Errorf("unknown rbl_must: %T %v", t, t)
 			}
 		case "re":
 			a, ok := v.([]interface{})
@@ -275,4 +302,48 @@ func (o *Filter) UnmarshalTOML(data interface{}) error {
 		}
 	}
 	return nil
+}
+
+func Check_rbl(gg *gogroup.Group, ip net.IP, all bool, out chan interface{}) {
+	go func() {
+		defer func() {
+			out <- nil
+		}()
+		ip_rev := net.IP(make([]byte, len(ip.To4())))
+		copy(ip_rev, ip.To4())
+		for i, j := 0, len(ip_rev)-1; i < j; i, j = i+1, j-1 {
+			ip_rev[i], ip_rev[j] = ip_rev[j], ip_rev[i]
+		}
+		for _, h := range Rbls {
+			select {
+			case <-gg.Done():
+				return
+			default:
+			}
+			a, err := net.LookupHost(ip_rev.String() + "." + h)
+			if err == nil {
+				if 0 < len(a) {
+					out <- &Rbl_result{Rbl: h, Found: true}
+					if !all {
+						return
+					}
+				}
+			} else {
+				if strings.HasSuffix(err.Error(), "no such host") {
+					out <- &Rbl_result{Rbl: h}
+					if !all {
+						return
+					}
+				} else {
+					j.Err(err)
+					continue
+				}
+			}
+		}
+	}()
+}
+
+type Rbl_result struct {
+	Rbl   string
+	Found bool
 }

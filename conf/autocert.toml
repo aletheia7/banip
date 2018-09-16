@@ -1,0 +1,15 @@
+enabled = true 
+rbl_use = true
+syslog_identifier = ['www-proxy']
+action = 'ban'
+re = [
+    '^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} http: TLS handshake error from {{.Ipv4}}:\d+: acme/autocert: (missing server name|host not configured)$'
+  , '^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} http: TLS handshake error from {{.Ipv4}}:\d+: tls: client offered an unsupported, maximum protocol version of (300|301|302)$'
+] 
+testdata = [
+    '2018/09/15 15:53:20 http: TLS handshake error from 178.140.59.143:51912: acme/autocert: missing server name'
+  , '2017/08/29 22:40:09 http: TLS handshake error from 38.142.119.122:40460: acme/autocert: host not configured'
+  , '2018/09/13 11:04:34 http: TLS handshake error from 209.242.208.67:10097: tls: client offered an unsupported, maximum protocol version of 301'
+  , '2018/09/13 11:04:34 http: TLS handshake error from 209.242.208.67:10097: tls: client offered an unsupported, maximum protocol version of 300'
+  , '2018/09/13 11:04:34 http: TLS handshake error from 209.242.208.67:10097: tls: client offered an unsupported, maximum protocol version of 302'
+]
