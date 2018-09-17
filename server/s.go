@@ -137,7 +137,7 @@ func (o *Server) run(device, since string) {
 							j.Err(err)
 							return
 						}
-						var rbl_found interface{} = nil
+						var rbl_found interface{} = a.Rbl
 						if a.Check_rbl {
 							c := make(chan interface{}, 2)
 							filter.Check_rbl(o.gg, ip, false, c)
@@ -184,6 +184,12 @@ func (o *Server) In_list(ip net.IP) (value, found bool) {
 
 func (o *Server) Wl(ip net.IP) {
 	if _, err := o.db.ExecContext(o.gg, "replace into ip(ip, ban, ts, toml) values(:ip, 0, :ts, null)", sql.Named("ip", ip.To4().String()), sql.Named("ts", time.Now().Format(tsfmt))); err != nil {
+		j.Err(err)
+	}
+}
+
+func (o *Server) Rm(ip net.IP) {
+	if _, err := o.db.ExecContext(o.gg, "delete from ip where ip = :ip", sql.Named("ip", ip.To4().String())); err != nil {
 		j.Err(err)
 	}
 }

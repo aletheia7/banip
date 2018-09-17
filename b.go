@@ -26,6 +26,7 @@ var (
 	// rmip     = flag.String("rmip", "", "remove IP and exit")
 	// qip      = flag.String("qip", "", "query IP in datbase and exit")
 	wlip     = flag.String("wlip", "", "whitelist IP and exit")
+	rmip     = flag.String("rmip", "", "remove IP and exit")
 	since    = flag.String("since", "", "passed to journalctl --since")
 	rbl      = flag.String("rbl", "", "query rbls with IP and exit")
 	rbls_in  = flag.String("rbls", "sbl-xbl.spamhaus.org,bl.spamcop.net,dnsbl.sorbs.net,dnsbl-1.uceprotect.net,dnsbl-2.uceprotect.net,dnsbl-3.uceprotect.net", "rbls: comma separted")
@@ -65,6 +66,17 @@ func main() {
 			return
 		}
 		server.New(gg, u.HomeDir).Wl(ip)
+		gg.Cancel()
+		return
+	case 0 < len(*rmip):
+		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
+		j.Info("rmip:", *rmip)
+		ip := net.ParseIP(*rmip)
+		if ip == nil {
+			j.Err("invalid ip", ip)
+			return
+		}
+		server.New(gg, u.HomeDir).Rm(ip)
 		gg.Cancel()
 		return
 	case *test_nft:
