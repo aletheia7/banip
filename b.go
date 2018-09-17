@@ -22,11 +22,10 @@ var (
 	testdata = flag.String("testdata", "", "run path to toml, use testdata and exit")
 	test     = flag.String("test", "", "run path to toml, use journalctl and exit")
 	test_nft = flag.Bool("testnft", false, "add banip")
-	// blip     = flag.String("blip", "", "blacklist IP and exit")
-	// rmip     = flag.String("rmip", "", "remove IP and exit")
-	// qip      = flag.String("qip", "", "query IP in datbase and exit")
+	blip     = flag.String("blip", "", "blacklist IP and exit")
 	wlip     = flag.String("wlip", "", "whitelist IP and exit")
 	rmip     = flag.String("rmip", "", "remove IP and exit")
+	qip      = flag.String("qip", "", "remove IP and exit")
 	since    = flag.String("since", "", "passed to journalctl --since")
 	rbl      = flag.String("rbl", "", "query rbls with IP and exit")
 	rbls_in  = flag.String("rbls", "sbl-xbl.spamhaus.org,bl.spamcop.net,dnsbl.sorbs.net,dnsbl-1.uceprotect.net,dnsbl-2.uceprotect.net,dnsbl-3.uceprotect.net", "rbls: comma separted")
@@ -68,6 +67,17 @@ func main() {
 		server.New(gg, u.HomeDir).Wl(ip)
 		gg.Cancel()
 		return
+	case 0 < len(*blip):
+		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
+		j.Info("blip:", *blip)
+		ip := net.ParseIP(*wlip)
+		if ip == nil {
+			j.Err("invalid ip", ip)
+			return
+		}
+		server.New(gg, u.HomeDir).Bl(ip)
+		gg.Cancel()
+		return
 	case 0 < len(*rmip):
 		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
 		j.Info("rmip:", *rmip)
@@ -77,6 +87,17 @@ func main() {
 			return
 		}
 		server.New(gg, u.HomeDir).Rm(ip)
+		gg.Cancel()
+		return
+	case 0 < len(*qip):
+		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
+		j.Info("qip:", *qip)
+		ip := net.ParseIP(*qip)
+		if ip == nil {
+			j.Err("invalid ip", ip)
+			return
+		}
+		server.New(gg, u.HomeDir).Q(ip)
 		gg.Cancel()
 		return
 	case *test_nft:

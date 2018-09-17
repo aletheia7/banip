@@ -188,6 +188,41 @@ func (o *Server) Wl(ip net.IP) {
 	}
 }
 
+func (o *Server) Q(ip net.IP) {
+	var (
+		oid            int64
+		ban            bool
+		ts             time.Time
+		toml, log, rbl sql.NullString
+	)
+	err := o.db.QueryRowContext(o.gg, "select oid, ban, ts, toml, log, rbl from ip where ip = :ip", sql.Named("ip", ip.To4().String())).Scan(&oid, &ban, (*Stime)(&ts), &toml, &log, &rbl)
+	switch err {
+	case sql.ErrNoRows:
+	case nil:
+	default:
+		j.Err(err)
+		return
+	}
+	j.Info("oid:", oid)
+	j.Info("ban:", ban)
+	j.Info("ts:", ts.Format("2006-01-02 15:04:05"))
+	if toml.Valid {
+		j.Info("toml:", toml.String)
+	}
+	if log.Valid {
+		j.Info("log:", log.String)
+	}
+	if rbl.Valid {
+		j.Info("rbl:", rbl.String)
+	}
+}
+
+func (o *Server) Bl(ip net.IP) {
+	if _, err := o.db.ExecContext(o.gg, "insert or ignore into ip(ip, ban, ts, toml) values(:ip, 1, :ts, 'blip')", sql.Named("ip", ip.To4().String()), sql.Named("ts", time.Now().Format(tsfmt))); err != nil {
+		j.Err(err)
+	}
+}
+
 func (o *Server) Rm(ip net.IP) {
 	if _, err := o.db.ExecContext(o.gg, "delete from ip where ip = :ip", sql.Named("ip", ip.To4().String())); err != nil {
 		j.Err(err)
@@ -400,6 +435,14 @@ func (o *Stime) Scan(v interface{}) error {
 	switch t := v.(type) {
 	case int64:
 		*o = Stime(time.Unix(t, 0))
+	case []byte:
+		ts, err := time.Parse(string(t), tsfmt)
+		if err != nil {
+			return err
+		}
+		*o = Stime(ts)
+	case time.Time:
+		*o = Stime(t)
 	default:
 		return fmt.Errorf("unsupported type: %T: %v", t, t)
 	}

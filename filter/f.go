@@ -357,23 +357,26 @@ func Check_rbl(gg *gogroup.Group, ip net.IP, all bool, out chan interface{}) {
 				return
 			default:
 			}
-			a, err := net.LookupHost(ip_rev.String() + "." + h)
-			if err == nil {
-				if 0 < len(a) {
-					out <- &Rbl_result{Rbl: h, Found: true}
-					if !all {
-						return
+			for try := 2; 0 < try; try-- {
+				a, err := net.LookupHost(ip_rev.String() + "." + h)
+				switch {
+				case err == nil:
+					try = 0
+					if 0 < len(a) {
+						out <- &Rbl_result{Rbl: h, Found: true}
+						if !all {
+							return
+						}
 					}
-				}
-			} else {
-				if strings.HasSuffix(err.Error(), "no such host") {
+				case strings.HasSuffix(err.Error(), "i/o timeout"):
+				case strings.HasSuffix(err.Error(), "no such host"):
 					out <- &Rbl_result{Rbl: h}
+					try = 0
 					if !all {
 						return
 					}
-				} else {
+				default:
 					j.Err(err)
-					continue
 				}
 			}
 		}
