@@ -22,10 +22,10 @@ var (
 	testdata = flag.String("testdata", "", "run path to toml, use testdata and exit")
 	test     = flag.String("test", "", "run path to toml, use journalctl and exit")
 	test_nft = flag.Bool("testnft", false, "add banip")
-	// wlip     = flag.String("wlip", "", "whitelist IP and exit")
 	// blip     = flag.String("blip", "", "blacklist IP and exit")
 	// rmip     = flag.String("rmip", "", "remove IP and exit")
 	// qip      = flag.String("qip", "", "query IP in datbase and exit")
+	wlip     = flag.String("wlip", "", "whitelist IP and exit")
 	rbl      = flag.String("rbl", "", "query rbls with IP and exit")
 	rbls_in  = flag.String("rbls", "sbl-xbl.spamhaus.org,bl.spamcop.net,dnsbl.sorbs.net,dnsbl-1.uceprotect.net,dnsbl-2.uceprotect.net,dnsbl-3.uceprotect.net", "rbls: comma separted")
 	rbls     = []string{}
@@ -55,6 +55,17 @@ func main() {
 	case 0 < len(*rbl):
 		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
 		go do_rbl()
+	case 0 < len(*wlip):
+		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
+		j.Info("wlip:", *wlip)
+		ip := net.ParseIP(*wlip)
+		if ip == nil {
+			j.Err("invalid ip", ip)
+			return
+		}
+		server.New(gg, u.HomeDir).Wl(ip)
+		gg.Cancel()
+		return
 	case *test_nft:
 		j = sd.New(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
 		if len(*device) == 0 {
@@ -83,7 +94,7 @@ func main() {
 		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
 		j.Info("test:", *test)
 		bus := mbus.New_bus(gg)
-		if f, err := filter.New(gg, bus, *test, server.New(gg, u.HomeDir, *device)); err == nil {
+		if f, err := filter.New(gg, bus, *test, server.New(gg, u.HomeDir)); err == nil {
 			go server.Journal(gg, f, true, f.Tag)
 		} else {
 			j.Err(err)
@@ -94,7 +105,7 @@ func main() {
 		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
 		j.Info("testdata:", *testdata)
 		bus := mbus.New_bus(gg)
-		if f, err := filter.New(gg, bus, *testdata, server.New(gg, u.HomeDir, *device)); err == nil {
+		if f, err := filter.New(gg, bus, *testdata, server.New(gg, u.HomeDir)); err == nil {
 			f.Testdata()
 		} else {
 			j.Err(err)
@@ -106,7 +117,7 @@ func main() {
 			j.Err("missing device", *device)
 			return
 		}
-		server.New(gg, u.HomeDir, *device).Run()
+		server.New(gg, u.HomeDir).Run(*device)
 	}
 	defer gg.Wait()
 	<-gg.Done()

@@ -30,27 +30,26 @@ var (
 	j        = sd.New()
 	toml_dir = flag.String("toml", "", "toml directory, default: <user home>/toml")
 	sqlite   = flag.String("sqlite", "banip.sqlite", "if not exist: will be made")
+	nolog    = flag.Bool("nolog", false, "nolog")
 )
 
 const tsfmt = `2006-01-02 15:04:05-07:00`
 
 type Server struct {
-	gg     *gogroup.Group
-	home   string
-	device string
+	gg   *gogroup.Group
+	home string
 	// 4 byte string key
 	list    map[string]bool
 	mu_list sync.RWMutex
 	db      *sql.DB
 }
 
-func New(gg *gogroup.Group, home, device string) *Server {
+func New(gg *gogroup.Group, home string) *Server {
 	o := &Server{
-		gg:     gg,
-		home:   home,
-		device: device,
-		list:   map[string]bool{},
-		db:     get_database(gg, home),
+		gg:   gg,
+		home: home,
+		list: map[string]bool{},
+		db:   get_database(gg, home),
 	}
 	if o.db == nil {
 		return o
@@ -87,22 +86,24 @@ func New(gg *gogroup.Group, home, device string) *Server {
 
 var run_once sync.Once
 
-func (o *Server) Run() {
+func (o *Server) Run(device string) {
 	run_once.Do(func() {
-		o.run()
+		o.run(device)
 	})
 }
 
-func (o *Server) run() {
+func (o *Server) run(device string) {
 	key := o.gg.Register()
 	defer o.gg.Unregister(key)
 	o.mu_list.RLock()
 	bl := make([]string, 0, len(o.list))
-	for ip_bin := range o.list {
-		bl = append(bl, net.IP(ip_bin).String())
+	for ip_bin, v := range o.list {
+		if v {
+			bl = append(bl, net.IP(ip_bin).String())
+		}
 	}
 	o.mu_list.RUnlock()
-	bset, e := nft.New_table(`inet`, `filter`, `banip`, o.device)
+	bset, e := nft.New_table(`inet`, `filter`, `banip`, device)
 	if e != nil {
 		j.Err(e)
 		return
@@ -163,7 +164,9 @@ func (o *Server) run() {
 						if err != nil {
 							j.Err(err)
 						}
-						j.Infof("blacklist: %v %v %v %v", a.Toml, id, a.Ip, rbl_found)
+						if !*nolog {
+							j.Infof("blacklist: %v %v %v %v", a.Toml, id, a.Ip, rbl_found)
+						}
 					}
 				}
 			}
@@ -177,6 +180,12 @@ func (o *Server) In_list(ip net.IP) (value, found bool) {
 	defer o.mu_list.RUnlock()
 	value, found = o.list[string(ip.To4())]
 	return
+}
+
+func (o *Server) Wl(ip net.IP) {
+	if _, err := o.db.ExecContext(o.gg, "replace into ip(ip, ban, ts, toml) values(:ip, 0, :ts, null)", sql.Named("ip", ip.To4().String()), sql.Named("ts", time.Now().Format(tsfmt))); err != nil {
+		j.Err(err)
+	}
 }
 
 func (o *Server) run_filter(bus *mbus.Bus) {
@@ -251,15 +260,13 @@ func get_database(gg *gogroup.Group, home string) *sql.DB {
 
 var schema = `drop table if exists ip;
 create table if not exists ip (
-    ip text not null
+    ip text not null unique
   , ban int not null check(ban in (0, 1))
   , ts datetime not null
   , toml text
   , rbl text
   , log text
 );
-drop index if exists ip_i;
-create unique index ip_i on ip(ip, ban);
 -- vim: ts=2 expandtab`
 
 type m struct {
