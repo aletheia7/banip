@@ -62,7 +62,7 @@ func main() {
 			flag.PrintDefaults()
 			return
 		}
-		t, err := nft.New_table(`netdev`, `filter`, `banip`, *device)
+		t, err := nft.New_table(`inet`, `filter`, `banip`, *device)
 		if err != nil {
 			j.Err(err.Err)
 			j.Err(string(err.Output))

@@ -102,7 +102,7 @@ func (o *Server) run() {
 		bl = append(bl, net.IP(ip_bin).String())
 	}
 	o.mu_list.RUnlock()
-	bset, e := nft.New_table(`netdev`, `filter`, `banip`, o.device)
+	bset, e := nft.New_table(`inet`, `filter`, `banip`, o.device)
 	if e != nil {
 		j.Err(e)
 		return
