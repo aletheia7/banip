@@ -1,4 +1,4 @@
-enabled = false 
+enabled = true 
 rbl_use = true
 syslog_identifier = ['auth']
 action = 'ban'
