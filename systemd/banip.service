@@ -1,0 +1,30 @@
+# vim: ft=systemd
+[Unit]
+Description = %p 
+Wants = network-online.target
+After = network-online.target
+Requires =      nftables.service
+After =         nftables.service
+ConditionPathExists = /home/banip/go/bin/banip
+StartLimitInterval = 0
+
+[Service]
+User = banip	
+Group = banip	
+WorkingDirectory = ~
+AmbientCapabilities = cap_net_admin
+ExecStart = /home/banip/go/bin/banip -device eth0 -toml toml
+#ExecStart = /home/banip/go/bin/banip -device eth0 -toml toml -since '2018-09-16 21:21'
+PrivateTmp = true
+ProtectSystem = strict
+ProtectControlGroups = true
+Restart = always
+TimeoutStopSec = 3s
+
+; Cannot use these options 3/31/2017
+; bad ProtectKernelTunables = true
+; bad PrivateDevices = true
+; bad PrivateUsers = true
+
+[Install]
+WantedBy = default.target
