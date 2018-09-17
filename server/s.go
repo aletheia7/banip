@@ -86,13 +86,13 @@ func New(gg *gogroup.Group, home string) *Server {
 
 var run_once sync.Once
 
-func (o *Server) Run(device string) {
+func (o *Server) Run(device, since string) {
 	run_once.Do(func() {
-		o.run(device)
+		o.run(device, since)
 	})
 }
 
-func (o *Server) run(device string) {
+func (o *Server) run(device, since string) {
 	key := o.gg.Register()
 	defer o.gg.Unregister(key)
 	o.mu_list.RLock()
@@ -117,7 +117,7 @@ func (o *Server) run(device string) {
 	bus.Subscribe(c, filter.T_bl)
 	defer bus.Unsubscribe(c, filter.T_bl)
 	// list_mu must be used after run_filter
-	o.run_filter(bus)
+	o.run_filter(bus, since)
 	for {
 		select {
 		case <-o.gg.Done():
@@ -188,7 +188,7 @@ func (o *Server) Wl(ip net.IP) {
 	}
 }
 
-func (o *Server) run_filter(bus *mbus.Bus) {
+func (o *Server) run_filter(bus *mbus.Bus, since string) {
 	td := filepath.Join(o.home, "toml", "*.toml")
 	if 0 < len(*toml_dir) {
 		td = filepath.Join(*toml_dir, "*.toml")
@@ -229,7 +229,7 @@ func (o *Server) run_filter(bus *mbus.Bus) {
 		j.Warning("Execute: systemctl restart banip")
 		j.Warning("Typical of a new installation 😊")
 	}
-	Journal(o.gg, bus, false, a)
+	Journal(o.gg, bus, false, a, since)
 }
 
 func get_database(gg *gogroup.Group, home string) *sql.DB {
@@ -274,17 +274,15 @@ type m struct {
 	Message string `json:"MESSAGE"`
 }
 
-type Pubor interface {
-	Pub(topic string, data interface{})
-}
-
-func Journal(gg *gogroup.Group, pub Pubor, test bool, tag []string) {
-	var tag_args []string
+func Journal(gg *gogroup.Group, bus *mbus.Bus, test bool, tag []string, since string) {
+	tag_args := make([]string, 0, (len(tag)*2)+6)
+	if 0 < len(since) {
+		j.Info("since:", since)
+		tag_args = append(tag_args, "--since", since)
+	}
 	if test {
-		tag_args = make([]string, 0, (len(tag)*2)+2)
 		tag_args = append(tag_args, "--output", "json")
 	} else {
-		tag_args = make([]string, 0, (len(tag)*2)+4)
 		tag_args = append(tag_args, "-n", "all", "-f", "--output", "json")
 	}
 	for _, t := range tag {
@@ -302,7 +300,7 @@ func Journal(gg *gogroup.Group, pub Pubor, test bool, tag []string) {
 	go func() {
 		if test {
 			defer func() {
-				pub.Pub(filter.T_test, nil)
+				bus.Pub(filter.T_test, nil)
 			}()
 		}
 		defer rp.Close()
@@ -314,9 +312,9 @@ func Journal(gg *gogroup.Group, pub Pubor, test bool, tag []string) {
 				continue
 			}
 			if test {
-				pub.Pub(filter.T_test, m.Message)
+				bus.Pub(filter.T_test, m.Message)
 			} else {
-				pub.Pub(m.Tag, m.Message)
+				bus.Pub(m.Tag, m.Message)
 			}
 		}
 		if err := scanner.Err(); err != nil {

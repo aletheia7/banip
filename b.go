@@ -26,6 +26,7 @@ var (
 	// rmip     = flag.String("rmip", "", "remove IP and exit")
 	// qip      = flag.String("qip", "", "query IP in datbase and exit")
 	wlip     = flag.String("wlip", "", "whitelist IP and exit")
+	since    = flag.String("since", "", "passed to journalctl --since")
 	rbl      = flag.String("rbl", "", "query rbls with IP and exit")
 	rbls_in  = flag.String("rbls", "sbl-xbl.spamhaus.org,bl.spamcop.net,dnsbl.sorbs.net,dnsbl-1.uceprotect.net,dnsbl-2.uceprotect.net,dnsbl-3.uceprotect.net", "rbls: comma separted")
 	rbls     = []string{}
@@ -95,7 +96,7 @@ func main() {
 		j.Info("test:", *test)
 		bus := mbus.New_bus(gg)
 		if f, err := filter.New(gg, bus, *test, server.New(gg, u.HomeDir)); err == nil {
-			go server.Journal(gg, f, true, f.Tag)
+			go server.Journal(gg, bus, true, f.Tag, *since)
 		} else {
 			j.Err(err)
 			gg.Cancel()
@@ -117,7 +118,7 @@ func main() {
 			j.Err("missing device", *device)
 			return
 		}
-		server.New(gg, u.HomeDir).Run(*device)
+		server.New(gg, u.HomeDir).Run(*device, *since)
 	}
 	defer gg.Wait()
 	<-gg.Done()

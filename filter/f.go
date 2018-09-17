@@ -100,10 +100,6 @@ func New(gg *gogroup.Group, bus *mbus.Bus, fn string, srv Get_it) (*Filter, erro
 	return o, nil
 }
 
-func (o *Filter) Pub(topic string, data interface{}) {
-	o.c <- mbus.New_msg(topic, data)
-}
-
 // Call Stop() to shutdown
 func (o *Filter) Stop() {
 	o.gg.Cancel()
