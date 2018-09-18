@@ -125,6 +125,10 @@ func (o *Filter) run() {
 }
 
 func (o *Filter) Testdata() {
+	if o.Rbl_must {
+		o.Rbl_must = false
+		j.Info("setting rbl_must = false testdata only")
+	}
 	for _, t := range o.testdata {
 		o.c <- mbus.New_msg(T_test, t)
 	}
@@ -170,7 +174,7 @@ func (o *Filter) test(in *mbus.Msg) {
 	case <-o.gg.Done():
 		return
 	default:
-		switch t := in.Data.(type) {
+		switch msg := in.Data.(type) {
 		case nil:
 			j.Infof("total: matched: %v (%v), ignored: %v, missed: %v, total: %v\n", o.matched, len(o.matched_u), o.ignored, o.total-o.matched-o.ignored, o.total)
 			// Call parent to shutdown app gracefully
@@ -179,7 +183,7 @@ func (o *Filter) test(in *mbus.Msg) {
 		case string:
 			o.total++
 			for _, re := range o.Re {
-				s := re.ExpandString(nil, ipv4, t, re.FindStringSubmatchIndex(t))
+				s := re.ExpandString(nil, ipv4, msg, re.FindStringSubmatchIndex(msg))
 				if s != nil {
 					if o.Rbl_must {
 						ipnet := net.ParseIP(string(s))
@@ -187,7 +191,7 @@ func (o *Filter) test(in *mbus.Msg) {
 							o.matched++
 							o.matched_u[string(s)] = true
 							if *pmatched {
-								j.Infof("matched: %s %v\n", s, re.String())
+								j.Infof("matched: %s %v\n%v\n", s, re.String(), msg)
 							}
 							return
 						}
@@ -201,7 +205,7 @@ func (o *Filter) test(in *mbus.Msg) {
 								o.matched++
 								o.matched_u[string(s)] = true
 								if *pmatched {
-									j.Infof("matched: %s %v\n", s, re.String())
+									j.Infof("matched: %s %v\n%v\n", s, re.String(), msg)
 								}
 								return
 							}
@@ -210,14 +214,14 @@ func (o *Filter) test(in *mbus.Msg) {
 						o.matched++
 						o.matched_u[string(s)] = true
 						if *pmatched {
-							j.Infof("matched: %s %v\n", s, re.String())
+							j.Infof("matched: %s %v\n%v\n", s, re.String(), msg)
 						}
 						return
 					}
 				}
 			}
 			for _, re := range o.Ignore {
-				if re.MatchString(t) {
+				if re.MatchString(msg) {
 					o.ignored++
 					if *pignored {
 						j.Infof("ignored: %s\n", re.String())
@@ -226,7 +230,7 @@ func (o *Filter) test(in *mbus.Msg) {
 				}
 			}
 			if *pmissed {
-				j.Infof("missed: %s\n", t)
+				j.Infof("missed: %s\n", msg)
 			}
 		}
 	}
