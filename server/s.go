@@ -198,6 +198,7 @@ func (o *Server) Q(ip net.IP) {
 	err := o.db.QueryRowContext(o.gg, "select oid, ban, ts, toml, log, rbl from ip where ip = :ip", sql.Named("ip", ip.To4().String())).Scan(&oid, &ban, (*Stime)(&ts), &toml, &log, &rbl)
 	switch err {
 	case sql.ErrNoRows:
+		return
 	case nil:
 	default:
 		j.Err(err)
