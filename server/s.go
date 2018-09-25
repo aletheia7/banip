@@ -135,7 +135,7 @@ func (o *Queue) Handle(p *nfqueue.Packet) {
 		j.Warning("DecodeLayers err", err)
 		return
 	}
-	j.Errf("debug rx %v:%d -> %v:%d\n", ip4.SrcIP, tcp.SrcPort, ip4.DstIP, tcp.DstPort)
+	// j.Errf("debug rx %v:%d -> %v:%d\n", ip4.SrcIP, tcp.SrcPort, ip4.DstIP, tcp.DstPort)
 	if _, found := o.s.In_list(ip4.SrcIP); found {
 		if err = p.Drop(); err != nil {
 			j.Warning(err)
