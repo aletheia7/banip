@@ -76,7 +76,7 @@ func New(gg *gogroup.Group, home string) *Server {
 			j.Err(err)
 			return o
 		}
-		if ts.Add(*ban_dur).After(now) {
+		if ts.Add(*ban_dur).Before(now) {
 			exp_ct++
 			continue
 		}
@@ -149,6 +149,9 @@ func (o *Queue) Handle(p *nfqueue.Packet) {
 	case r := <-c:
 		switch t := r.(type) {
 		case *filter.Rbl_result:
+			if 0 < len(t.Rbl) && !t.Found {
+				j.Errf("debug rx %v %v %v -> %v:%d\n", t.Found, t.Rbl, ip4.SrcIP, ip4.DstIP, tcp.DstPort)
+			}
 			if t.Found {
 				if err = p.Drop(); err != nil {
 					j.Warning(err)

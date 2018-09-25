@@ -374,11 +374,6 @@ func Check_rbl(gg *gogroup.Group, ip net.IP, all bool, out chan interface{}) {
 					}
 				case strings.HasSuffix(err.Error(), "i/o timeout"):
 				case strings.HasSuffix(err.Error(), "no such host"):
-					out <- &Rbl_result{Rbl: h}
-					try = 0
-					if !all {
-						return
-					}
 				default:
 					j.Err(err)
 				}
