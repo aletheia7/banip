@@ -16,3 +16,9 @@
 [submodule "vendor/github.com/aletheia7/mbus"]
 	path = vendor/github.com/aletheia7/mbus
 	url = https://github.com/aletheia7/mbus.git
+[submodule "vendor/github.com/aletheia7/nfqueue"]
+	path = vendor/github.com/aletheia7/nfqueue
+	url = https://github.com/aletheia7/nfqueue.git
+[submodule "vendor/github.com/google/gopacket"]
+	path = vendor/github.com/google/gopacket
+	url = https://github.com/google/gopacket.git

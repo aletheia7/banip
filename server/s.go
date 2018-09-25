@@ -14,7 +14,10 @@ import (
 	"fmt"
 	"github.com/aletheia7/gogroup"
 	"github.com/aletheia7/mbus"
+	"github.com/aletheia7/nfqueue"
 	"github.com/aletheia7/sd"
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
 	_ "github.com/mattn/go-sqlite3"
 	"io"
 	"net"
@@ -31,6 +34,8 @@ var (
 	toml_dir = flag.String("toml", "", "toml directory, default: <user home>/toml")
 	sqlite   = flag.String("sqlite", "banip.sqlite", "if not exist: will be made")
 	nolog    = flag.Bool("nolog", false, "nolog")
+	queue_id = flag.Uint("queue", 77, "queue id 16 bit, needs to match nfttables rule queue num")
+	ban_dur  = flag.Duration("bdur", time.Duration(time.Hour*24*7), "ban duration, default: 7 days")
 )
 
 const tsfmt = `2006-01-02 15:04:05-07:00`
@@ -54,19 +59,26 @@ func New(gg *gogroup.Group, home string) *Server {
 	if o.db == nil {
 		return o
 	}
-	rows, err := o.db.QueryContext(o.gg, "select ip, ban from ip")
+	rows, err := o.db.QueryContext(o.gg, "select ip, ban, ts from ip")
 	if err != nil {
 		j.Err(err)
 		return o
 	}
 	var ip string
 	var ban int
+	var ts time.Time
+	now := time.Now()
 	wl_ct := 0
 	bl_ct := 0
+	exp_ct := 0
 	for rows.Next() {
-		if err = rows.Scan(&ip, &ban); err != nil {
+		if err = rows.Scan(&ip, &ban, (*Stime)(&ts)); err != nil {
 			j.Err(err)
 			return o
+		}
+		if ts.Add(*ban_dur).After(now) {
+			exp_ct++
+			continue
 		}
 		if ban == 0 {
 			wl_ct++
@@ -81,15 +93,103 @@ func New(gg *gogroup.Group, home string) *Server {
 	}
 	j.Info("whitelist:", wl_ct)
 	j.Info("blacklist:", bl_ct)
+	j.Info("expired:", exp_ct)
 	return o
 }
 
 var run_once sync.Once
 
-func (o *Server) Run(device, since string) {
+func (o *Server) Run(device, since string, nf_mode bool) {
 	run_once.Do(func() {
-		o.run(device, since)
+		if nf_mode {
+			o.run_nf()
+		} else {
+			o.run(device, since)
+		}
 	})
+}
+
+type Queue struct {
+	n *nfqueue.Queue
+	s *Server
+}
+
+func New_queue(id uint16, s *Server) *Queue {
+	q := &Queue{}
+	q.n = nfqueue.NewQueue(id, q, &nfqueue.QueueConfig{MaxPackets: 5000, BufferSize: 16 * 1024 * 1024})
+	q.s = s
+	return q
+}
+
+func (o *Queue) Handle(p *nfqueue.Packet) {
+	var ip4 layers.IPv4
+	var tcp layers.TCP
+	var udp layers.UDP
+	var payload gopacket.Payload
+	parser := gopacket.NewDecodingLayerParser(layers.LayerTypeIPv4, &ip4, &tcp, &udp, &payload)
+	parser.IgnorePanic = true
+	parser.IgnoreUnsupported = true
+	decoded := make([]gopacket.LayerType, 0, 10)
+	err := parser.DecodeLayers(p.Buffer, &decoded)
+	if err != nil {
+		j.Warning("DecodeLayers err", err)
+		return
+	}
+	j.Errf("debug rx %v:%d -> %v:%d\n", ip4.SrcIP, tcp.SrcPort, ip4.DstIP, tcp.DstPort)
+	if _, found := o.s.In_list(ip4.SrcIP); found {
+		if err = p.Drop(); err != nil {
+			j.Warning(err)
+		}
+		return
+	}
+	c := make(chan interface{}, 2)
+	filter.Check_rbl(o.s.gg, ip4.SrcIP, false, c)
+	select {
+	case <-o.s.gg.Done():
+	case r := <-c:
+		switch t := r.(type) {
+		case *filter.Rbl_result:
+			if t.Found {
+				if err = p.Drop(); err != nil {
+					j.Warning(err)
+				}
+				o.s.mu_list.Lock()
+				o.s.list[string(ip4.SrcIP.To4())] = true
+				o.s.mu_list.Unlock()
+				if t, ok := r.(*filter.Rbl_result); ok && t.Found {
+					res, err := o.s.db.ExecContext(o.s.gg, "insert or ignore into ip(ip, ban, ts, toml, rbl) values(:ip, 1, :ts, :toml, :rbl)", sql.Named("ip", ip4.SrcIP.To4().String()), sql.Named("ts", time.Now().Format(tsfmt)), sql.Named("toml", `nf`), sql.Named("rbl", t.Rbl))
+					if err != nil {
+						j.Err(err)
+						return
+					}
+					id, err := res.LastInsertId()
+					if err != nil {
+						j.Err(err)
+					}
+					if !*nolog {
+						j.Infof("blacklist: nf %v %v %v", id, ip4.SrcIP.To4().String(), t.Rbl)
+					}
+				}
+				return
+			}
+		default:
+		}
+	}
+	if err := p.Accept(); err != nil {
+		j.Warning(err)
+	}
+	return
+}
+
+func (o *Server) run_nf() {
+	key := o.gg.Register()
+	defer o.gg.Unregister(key)
+	q := New_queue(uint16(*queue_id), o)
+	go q.n.Start()
+	j.Info("started")
+	<-o.gg.Done()
+	q.n.Stop()
+	defer j.Info("ended")
 }
 
 func (o *Server) run(device, since string) {
@@ -312,8 +412,8 @@ create table if not exists ip (
 -- vim: ts=2 expandtab`
 
 type m struct {
-	Tag     string `json:"SYSLOG_IDENTIFIER"`
-	Message string `json:"MESSAGE"`
+	Tag     string      `json:"SYSLOG_IDENTIFIER"`
+	Message interface{} `json:"MESSAGE"`
 }
 
 func Journal(gg *gogroup.Group, bus *mbus.Bus, test bool, tag []string, since string) {
@@ -353,10 +453,17 @@ func Journal(gg *gogroup.Group, bus *mbus.Bus, test bool, tag []string, since st
 				j.Err(err, scanner.Text())
 				continue
 			}
+			var s string
+			switch t := m.Message.(type) {
+			case string:
+				s = t
+			case []byte:
+				s = string(t)
+			}
 			if test {
-				bus.Pub(filter.T_test, m.Message)
+				bus.Pub(filter.T_test, s)
 			} else {
-				bus.Pub(m.Tag, m.Message)
+				bus.Pub(m.Tag, s)
 			}
 		}
 		if err := scanner.Err(); err != nil {
