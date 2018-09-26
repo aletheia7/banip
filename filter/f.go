@@ -65,7 +65,7 @@ type Filter struct {
 }
 
 type Get_it interface {
-	In_list(ip net.IP) (value, found bool)
+	In_list(ip net.IP) bool
 }
 
 func New(gg *gogroup.Group, bus *mbus.Bus, fn string, srv Get_it, rbls []string) (*Filter, error) {
@@ -146,7 +146,7 @@ func (o *Filter) check(in *mbus.Msg) {
 			for _, re := range o.Re {
 				if ip := re.ExpandString(nil, ipv4, msg, re.FindStringSubmatchIndex(msg)); ip != nil {
 					ipnet := net.ParseIP(string(ip))
-					if _, found := o.list.In_list(ipnet); found {
+					if o.list.In_list(ipnet) {
 						return
 					}
 					if o.Rbl_must {
@@ -187,7 +187,7 @@ func (o *Filter) test(in *mbus.Msg) {
 				if s != nil {
 					if o.Rbl_must {
 						ipnet := net.ParseIP(string(s))
-						if _, found := o.list.In_list(ipnet); found {
+						if o.list.In_list(ipnet) {
 							o.matched++
 							o.matched_u[string(s)] = true
 							if *pmatched {
