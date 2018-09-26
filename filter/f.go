@@ -4,6 +4,7 @@
 package filter
 
 import (
+	br "banip/rbl"
 	"bytes"
 	"flag"
 	"fmt"
@@ -53,21 +54,21 @@ type Filter struct {
 	Tag               []string
 	Re, Ignore        []*regexp.Regexp
 	Rbl_use, Rbl_must bool
-	bool
-	testdata  []string
-	subs      []string
-	matched   int
-	matched_u map[string]bool
-	ignored   int
-	total     int
-	list      Get_it
+	testdata          []string
+	subs              []string
+	matched           int
+	matched_u         map[string]bool
+	ignored           int
+	total             int
+	list              Get_it
+	rbl               *br.Search
 }
 
 type Get_it interface {
 	In_list(ip net.IP) (value, found bool)
 }
 
-func New(gg *gogroup.Group, bus *mbus.Bus, fn string, srv Get_it) (*Filter, error) {
+func New(gg *gogroup.Group, bus *mbus.Bus, fn string, srv Get_it, rbls []string) (*Filter, error) {
 	if ext := path.Ext(fn); ext != ".toml" {
 		e := fmt.Errorf("missing toml file: %v", fn)
 		j.Err(e)
@@ -84,6 +85,7 @@ func New(gg *gogroup.Group, bus *mbus.Bus, fn string, srv Get_it) (*Filter, erro
 		testdata:  []string{},
 		matched_u: map[string]bool{},
 		list:      srv,
+		rbl:       br.New(gg, rbls),
 	}
 	_, err := toml.DecodeFile(fn, o)
 	if err != nil {
@@ -148,14 +150,12 @@ func (o *Filter) check(in *mbus.Msg) {
 						return
 					}
 					if o.Rbl_must {
-						c := make(chan interface{}, 2)
-						Check_rbl(o.gg, ipnet, false, c)
 						select {
 						case <-o.gg.Done():
 							return
-						case r := <-c:
-							if t, ok := r.(*Rbl_result); ok && t.Found {
-								o.bus.Pub(T_bl, &Action{Toml: o.Name, Ip: string(ip), Msg: msg, Rbl: t.Rbl})
+						default:
+							if a := o.rbl.Lookup(ipnet, true); 0 < len(a) {
+								o.bus.Pub(T_bl, &Action{Toml: o.Name, Ip: string(ip), Msg: msg, Rbl: a[0]})
 								return
 							}
 						}
@@ -195,13 +195,11 @@ func (o *Filter) test(in *mbus.Msg) {
 							}
 							return
 						}
-						c := make(chan interface{}, 2)
-						Check_rbl(o.gg, ipnet, false, c)
 						select {
 						case <-o.gg.Done():
 							return
-						case r := <-c:
-							if t, ok := r.(*Rbl_result); ok && t.Found {
+						default:
+							if a := o.rbl.Lookup(ipnet, true); 0 < len(a) {
 								o.matched++
 								o.matched_u[string(s)] = true
 								if *pmatched {
@@ -343,46 +341,4 @@ func (o *Filter) UnmarshalTOML(data interface{}) error {
 		}
 	}
 	return nil
-}
-
-func Check_rbl(gg *gogroup.Group, ip net.IP, all bool, out chan interface{}) {
-	go func() {
-		defer func() {
-			out <- nil
-		}()
-		ip_rev := net.IP(make([]byte, len(ip.To4())))
-		copy(ip_rev, ip.To4())
-		for i, j := 0, len(ip_rev)-1; i < j; i, j = i+1, j-1 {
-			ip_rev[i], ip_rev[j] = ip_rev[j], ip_rev[i]
-		}
-		for _, h := range Rbls {
-			select {
-			case <-gg.Done():
-				return
-			default:
-			}
-			for try := 2; 0 < try; try-- {
-				a, err := net.LookupHost(ip_rev.String() + "." + h)
-				switch {
-				case err == nil:
-					try = 0
-					if 0 < len(a) {
-						out <- &Rbl_result{Rbl: h, Found: true}
-						if !all {
-							return
-						}
-					}
-				case strings.HasSuffix(err.Error(), "i/o timeout"):
-				case strings.HasSuffix(err.Error(), "no such host"):
-				default:
-					j.Err(err)
-				}
-			}
-		}
-	}()
-}
-
-type Rbl_result struct {
-	Rbl   string
-	Found bool
 }

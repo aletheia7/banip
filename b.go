@@ -6,6 +6,7 @@ package main
 import (
 	"banip/filter"
 	"banip/nft"
+	br "banip/rbl"
 	"banip/server"
 	"flag"
 	"fmt"
@@ -29,8 +30,8 @@ var (
 	since    = flag.String("since", "", "passed to journalctl --since")
 	rbl      = flag.String("rbl", "", "query rbls with IP and exit")
 	rbls_in  = flag.String("rbls", "dnsbl-1.uceprotect.net,dnsbl-2.uceprotect.net,dnsbl-3.uceprotect.net,sbl-xbl.spamhaus.org,bl.spamcop.net,dnsbl.sorbs.net", "rbls: comma separted")
+	rbls     []string
 	nf_mode  = flag.Bool("nf", true, "blocks IP by rbl")
-	rbls     = []string{}
 	device   = flag.String("device", "", "required netdev device; i.e. eth0, br0, enp2s0")
 	load_f2b = flag.String("load-f2b", "", "load <full path>/fail2ban.sqlite3 and exit")
 	ver      = flag.Bool("v", false, "version")
@@ -42,12 +43,12 @@ const tsfmt = `2006-01-02 15:04:05-07:00`
 
 func main() {
 	flag.Parse()
+	rbls = strings.Split(*rbls_in, ",")
 	if *ver {
 		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
 		j.Info(gogitver.Git())
 		return
 	}
-	filter.Rbls = strings.Split(*rbls_in, ",")
 	u, err := user.Current()
 	if err != nil {
 		j.Err(err)
@@ -65,7 +66,7 @@ func main() {
 			j.Err("invalid ip", ip)
 			return
 		}
-		server.New(gg, u.HomeDir).Wl(ip)
+		server.New(gg, u.HomeDir, rbls).Wl(ip)
 		gg.Cancel()
 		return
 	case 0 < len(*blip):
@@ -76,7 +77,7 @@ func main() {
 			j.Err("invalid ip", ip)
 			return
 		}
-		server.New(gg, u.HomeDir).Bl(ip)
+		server.New(gg, u.HomeDir, rbls).Bl(ip)
 		gg.Cancel()
 		return
 	case 0 < len(*rmip):
@@ -87,7 +88,7 @@ func main() {
 			j.Err("invalid ip", ip)
 			return
 		}
-		server.New(gg, u.HomeDir).Rm(ip)
+		server.New(gg, u.HomeDir, rbls).Rm(ip)
 		gg.Cancel()
 		return
 	case 0 < len(*qip):
@@ -98,7 +99,7 @@ func main() {
 			j.Err("invalid ip", ip)
 			return
 		}
-		server.New(gg, u.HomeDir).Q(ip)
+		server.New(gg, u.HomeDir, rbls).Q(ip)
 		gg.Cancel()
 		return
 	case *test_nft:
@@ -129,7 +130,7 @@ func main() {
 		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
 		j.Info("test:", *test)
 		bus := mbus.New_bus(gg)
-		if f, err := filter.New(gg, bus, *test, server.New(gg, u.HomeDir)); err == nil {
+		if f, err := filter.New(gg, bus, *test, server.New(gg, u.HomeDir, rbls), rbls); err == nil {
 			go server.Journal(gg, bus, true, f.Tag, *since)
 		} else {
 			j.Err(err)
@@ -140,7 +141,7 @@ func main() {
 		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
 		j.Info("testdata:", *testdata)
 		bus := mbus.New_bus(gg)
-		if f, err := filter.New(gg, bus, *testdata, server.New(gg, u.HomeDir)); err == nil {
+		if f, err := filter.New(gg, bus, *testdata, server.New(gg, u.HomeDir, rbls), rbls); err == nil {
 			f.Testdata()
 		} else {
 			j.Err(err)
@@ -152,7 +153,7 @@ func main() {
 			j.Err("missing device", *device, *nf_mode)
 			return
 		}
-		server.New(gg, u.HomeDir).Run(*device, *since, *nf_mode)
+		server.New(gg, u.HomeDir, rbls).Run(*device, *since, *nf_mode)
 	}
 	defer gg.Wait()
 	<-gg.Done()
@@ -160,20 +161,7 @@ func main() {
 
 func do_rbl() {
 	defer gg.Cancel()
-	ip := net.ParseIP(*rbl)
-	c := make(chan interface{}, len(rbls)+1)
-	filter.Check_rbl(gg, ip, true, c)
-	for {
-		select {
-		case <-gg.Done():
-			return
-		case r := <-c:
-			switch t := r.(type) {
-			case *filter.Rbl_result:
-				j.Info(ip.String(), t.Rbl, t.Found)
-			default:
-				return
-			}
-		}
+	for _, s := range (br.New(gg, rbls)).Lookup(net.ParseIP(*rbl), false) {
+		j.Info(s)
 	}
 }

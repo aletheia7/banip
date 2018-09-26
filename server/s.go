@@ -6,6 +6,7 @@ package server
 import (
 	"banip/filter"
 	"banip/nft"
+	br "banip/rbl"
 	"bufio"
 	"bytes"
 	"database/sql"
@@ -47,14 +48,18 @@ type Server struct {
 	list    map[string]bool
 	mu_list sync.RWMutex
 	db      *sql.DB
+	rbl     *br.Search
+	rbls    []string
 }
 
-func New(gg *gogroup.Group, home string) *Server {
+func New(gg *gogroup.Group, home string, rbls []string) *Server {
 	o := &Server{
 		gg:   gg,
 		home: home,
 		list: map[string]bool{},
 		db:   get_database(gg, home),
+		rbl:  br.New(gg, rbls),
+		rbls: rbls,
 	}
 	if o.db == nil {
 		return o
@@ -142,40 +147,30 @@ func (o *Queue) Handle(p *nfqueue.Packet) {
 		}
 		return
 	}
-	c := make(chan interface{}, 2)
-	filter.Check_rbl(o.s.gg, ip4.SrcIP, false, c)
 	select {
 	case <-o.s.gg.Done():
-	case r := <-c:
-		switch t := r.(type) {
-		case *filter.Rbl_result:
-			if 0 < len(t.Rbl) && !t.Found {
-				j.Errf("debug rx %v %v %v -> %v:%d\n", t.Found, t.Rbl, ip4.SrcIP, ip4.DstIP, tcp.DstPort)
-			}
-			if t.Found {
-				if err = p.Drop(); err != nil {
-					j.Warning(err)
-				}
-				o.s.mu_list.Lock()
-				o.s.list[string(ip4.SrcIP.To4())] = true
-				o.s.mu_list.Unlock()
-				if t, ok := r.(*filter.Rbl_result); ok && t.Found {
-					res, err := o.s.db.ExecContext(o.s.gg, "insert or ignore into ip(ip, ban, ts, toml, rbl) values(:ip, 1, :ts, :toml, :rbl)", sql.Named("ip", ip4.SrcIP.To4().String()), sql.Named("ts", time.Now().Format(tsfmt)), sql.Named("toml", `nf`), sql.Named("rbl", t.Rbl))
-					if err != nil {
-						j.Err(err)
-						return
-					}
-					id, err := res.LastInsertId()
-					if err != nil {
-						j.Err(err)
-					}
-					if !*nolog {
-						j.Infof("blacklist: nf %v %v %v", id, ip4.SrcIP.To4().String(), t.Rbl)
-					}
-				}
+		return
+	default:
+		if a := o.s.rbl.Lookup(ip4.SrcIP, true); 0 < len(a) {
+			o.s.mu_list.Lock()
+			o.s.list[string(ip4.SrcIP.To4())] = true
+			o.s.mu_list.Unlock()
+			res, err := o.s.db.ExecContext(o.s.gg, "insert or ignore into ip(ip, ban, ts, toml, rbl) values(:ip, 1, :ts, :toml, :rbl)", sql.Named("ip", ip4.SrcIP.To4().String()), sql.Named("ts", time.Now().Format(tsfmt)), sql.Named("toml", `nf`), sql.Named("rbl", a[0]))
+			if err != nil {
+				j.Err(err)
 				return
 			}
-		default:
+			id, err := res.LastInsertId()
+			if err != nil {
+				j.Err(err)
+			}
+			if !*nolog {
+				j.Infof("blacklist: nf %v %v %v", id, ip4.SrcIP.To4().String(), a[0])
+			}
+			if err = p.Drop(); err != nil {
+				j.Warning(err)
+			}
+			return
 		}
 	}
 	if err := p.Accept(); err != nil {
@@ -240,21 +235,14 @@ func (o *Server) run(device, since string) {
 							j.Err(err)
 							return
 						}
-						var rbl_found interface{} = a.Rbl
+						var rbl_found interface{}
 						if a.Check_rbl {
-							c := make(chan interface{}, 2)
-							filter.Check_rbl(o.gg, ip, false, c)
 							select {
 							case <-o.gg.Done():
 								return
-							case r := <-c:
-								switch t := r.(type) {
-								case *filter.Rbl_result:
-									if t.Found {
-										rbl_found = t.Rbl
-									}
-								default:
-									return
+							default:
+								if a := o.rbl.Lookup(ip, true); 0 < len(a) {
+									rbl_found = a[0]
 								}
 							}
 						}
@@ -347,7 +335,7 @@ func (o *Server) run_filter(bus *mbus.Bus, since string) {
 	enabled := false
 	tag := map[string]bool{}
 	for _, p := range toml {
-		f, err := filter.New(o.gg, bus, p, o)
+		f, err := filter.New(o.gg, bus, p, o, o.rbls)
 		if err != nil {
 			j.Err(err)
 			return
