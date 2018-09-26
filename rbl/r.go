@@ -50,7 +50,7 @@ func (o *Search) Lookup(ip net.IP, just_first bool) (ret []string) {
 					return
 				}
 			case strings.HasSuffix(err.Error(), "i/o timeout"):
-				j.Warning(h, err)
+				j.Warning("i/o timeout:", ip.String(), h)
 			case strings.HasSuffix(err.Error(), "no such host"):
 				try = 0
 			default:

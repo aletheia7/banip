@@ -15,6 +15,7 @@ import (
 	"github.com/aletheia7/sd"
 	"gogitver"
 	"net"
+	"os"
 	"os/user"
 	"strings"
 )
@@ -29,7 +30,7 @@ var (
 	qip      = flag.String("qip", "", "remove IP and exit")
 	since    = flag.String("since", "", "passed to journalctl --since")
 	rbl      = flag.String("rbl", "", "query rbls with IP and exit")
-	rbls_in  = flag.String("rbls", "dnsbl-1.uceprotect.net,dnsbl-2.uceprotect.net,dnsbl-3.uceprotect.net,sbl-xbl.spamhaus.org,bl.spamcop.net,dnsbl.sorbs.net", "rbls: comma separted")
+	rbls_in  = flag.String("rbls", "dnsbl-1.uceprotect.net,dnsbl-2.uceprotect.net,dnsbl-3.uceprotect.net,sbl-xbl.spamhaus.org,bl.spamcop.net,dnsbl.sorbs.net", "rbls: comma separted, or set banip_rbls environment variable")
 	rbls     []string
 	nf_mode  = flag.Bool("nf", true, "blocks IP by rbl")
 	device   = flag.String("device", "", "required netdev device; i.e. eth0, br0, enp2s0")
@@ -43,6 +44,9 @@ const tsfmt = `2006-01-02 15:04:05-07:00`
 
 func main() {
 	flag.Parse()
+	if s := os.Getenv("banip_rbls"); 0 < len(s) {
+		*rbls_in = s
+	}
 	rbls = strings.Split(*rbls_in, ",")
 	if *ver {
 		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
