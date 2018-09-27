@@ -31,12 +31,13 @@ import (
 )
 
 var (
-	j        = sd.New()
-	toml_dir = flag.String("toml", "", "toml directory, default: <user home>/toml")
-	sqlite   = flag.String("sqlite", "banip.sqlite", "if not exist: will be made")
-	nolog    = flag.Bool("nolog", false, "nolog")
-	queue_id = flag.Uint("queue", 77, "queue id 16 bit, needs to match nfttables rule queue num")
-	ban_dur  = flag.Duration("bdur", time.Duration(time.Hour*24*7), "ban duration, default: 7 days")
+	j         = sd.New()
+	toml_dir  = flag.String("toml", "", "toml directory, default: <user home>/toml")
+	sqlite    = flag.String("sqlite", "banip.sqlite", "if not exist: will be made")
+	nolog     = flag.Bool("nolog", false, "nolog")
+	queue_id  = flag.Uint("queue", 77, "queue id 16 bit, needs to match nfttables rule queue num")
+	ban_dur   = flag.Duration("bdur", time.Duration(time.Hour*24*7), "ban duration, default: 7 days")
+	stats_dur = flag.Duration("stats", time.Duration(time.Hour), "stats dur, default: hourly")
 )
 
 const tsfmt = `2006-01-02 15:04:05-07:00`
@@ -45,11 +46,12 @@ type Server struct {
 	gg   *gogroup.Group
 	home string
 	// 4 byte string key
-	list    map[string]*Ip_row
-	mu_list sync.RWMutex
-	db      *sql.DB
-	rbl     *br.Search
-	rbls    []string
+	list              map[string]*Ip_row
+	mu_list           sync.RWMutex
+	db                *sql.DB
+	rbl               *br.Search
+	rbls              []string
+	con_ct, banned_ct int
 }
 
 type Ip_row struct {
@@ -147,6 +149,7 @@ func (o *Queue) Handle(p *nfqueue.Packet) {
 		j.Warning("DecodeLayers err", err)
 		return
 	}
+	o.s.con_ct++
 	// j.Errf("debug rx %v:%d -> %v:%d\n", ip4.SrcIP, tcp.SrcPort, ip4.DstIP, tcp.DstPort)
 	if o.s.In_list(ip4.SrcIP) {
 		if err = p.Drop(); err != nil {
@@ -172,6 +175,7 @@ func (o *Queue) Handle(p *nfqueue.Packet) {
 			if err != nil {
 				j.Err(err)
 			}
+			o.s.banned_ct++
 			if !*nolog {
 				j.Infof("blacklist: nf %v %v %v", id, ip4.SrcIP.To4().String(), a[0])
 			}
@@ -206,6 +210,10 @@ func (o *Server) expire() {
 		select {
 		case <-o.gg.Done():
 			return
+		case <-time.After(*stats_dur):
+			j.Infof("new cons: %v, new bans: %v\n", o.con_ct, o.banned_ct)
+			o.con_ct = 0
+			o.banned_ct = 0
 		case <-time.After(time.Hour * 24):
 			j.Info("begin expire:", len(o.list))
 			o.mu_list.Lock()
