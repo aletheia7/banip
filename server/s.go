@@ -5,6 +5,7 @@ package server
 
 import (
 	"banip/filter"
+	"banip/list"
 	"banip/nft"
 	br "banip/rbl"
 	"bufio"
@@ -46,24 +47,18 @@ type Server struct {
 	gg   *gogroup.Group
 	home string
 	// 4 byte string key
-	list              map[string]*Ip_row
-	mu_list           sync.RWMutex
+	list              *list.WB
 	db                *sql.DB
 	rbl               *br.Search
 	rbls              []string
 	con_ct, banned_ct int
 }
 
-type Ip_row struct {
-	Ban bool
-	T   time.Time
-}
-
 func New(gg *gogroup.Group, home string, rbls []string) *Server {
 	o := &Server{
 		gg:   gg,
 		home: home,
-		list: map[string]*Ip_row{},
+		list: list.New(),
 		db:   get_database(gg, home),
 		rbl:  br.New(gg, rbls),
 		rbls: rbls,
