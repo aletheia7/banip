@@ -157,6 +157,7 @@ func main() {
 			j.Err("missing device", *device, *nf_mode)
 			return
 		}
+		j.Info("version:", gogitver.Git())
 		server.New(gg, u.HomeDir, rbls).Run(*device, *since, *nf_mode)
 	}
 	defer gg.Wait()
