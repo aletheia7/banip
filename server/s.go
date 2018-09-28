@@ -71,39 +71,40 @@ func New(gg *gogroup.Group, home string, rbls []string) *Server {
 		j.Err(err)
 		return o
 	}
-	var ip string
-	now := time.Now()
-	wl_ct := 0
-	bl_ct := 0
-	exp_ct := 0
+	var (
+		now    = time.Now()
+		exp_ct = 0
+		ip     string
+		ban    int
+		ts     time.Time
+	)
 	for rows.Next() {
-		ir := &Ip_row{}
-		var ban int
-		if err = rows.Scan(&ip, &ban, (*Stime)(&ir.T)); err != nil {
+		if err = rows.Scan(&ip, &ban, (*Stime)(&ts)); err != nil {
 			j.Err(err)
 			return o
 		}
 		// only expire blacklist
-		if ban == 1 && ir.T.Add(*ban_dur).Before(now) {
+		if ban == 1 && ts.Add(*ban_dur).Before(now) {
 			exp_ct++
 			continue
 		}
 		if ban == 0 {
-			wl_ct++
-			o.list[string(net.ParseIP(ip).To4())] = ir
+			o.list.W.Add(ip)
 		} else {
-			bl_ct++
-			ir.Ban = true
-			o.list[string(net.ParseIP(ip).To4())] = ir
+			o.list.B.Add(ip, &ts)
 		}
 	}
 	if err = rows.Err(); err != nil {
 		j.Err(err)
 	}
-	j.Info("whitelist:", wl_ct)
-	j.Info("blacklist:", bl_ct)
+	j.Info("whitelist:", o.list.W.Len())
+	j.Info("blacklist:", o.list.B.Len())
 	j.Info("expired:", exp_ct)
 	return o
+}
+
+func (o *Server) WB() *list.WB {
+	return o.list
 }
 
 var run_once sync.Once
@@ -146,44 +147,48 @@ func (o *Queue) Handle(p *nfqueue.Packet) {
 	}
 	o.s.con_ct++
 	// j.Errf("debug rx %v:%d -> %v:%d\n", ip4.SrcIP, tcp.SrcPort, ip4.DstIP, tcp.DstPort)
-	if o.s.In_list(ip4.SrcIP) {
-		if err = p.Drop(); err != nil {
-			j.Warning(err)
-		}
-		return
-	}
 	select {
 	case <-o.s.gg.Done():
-		return
+		if err = p.Accept(); err != nil {
+			j.Warning(err)
+		}
 	default:
-		if a := o.s.rbl.Lookup(ip4.SrcIP, true); 0 < len(a) {
-			ir := &Ip_row{Ban: true, T: time.Now()}
-			o.s.mu_list.Lock()
-			o.s.list[string(ip4.SrcIP.To4())] = ir
-			o.s.mu_list.Unlock()
-			res, err := o.s.db.ExecContext(o.s.gg, "insert or ignore into ip(ip, ban, ts, toml, rbl) values(:ip, 1, :ts, :toml, :rbl)", sql.Named("ip", ip4.SrcIP.To4().String()), sql.Named("ts", ir.T.Format(tsfmt)), sql.Named("toml", `nf`), sql.Named("rbl", a[0]))
-			if err != nil {
-				j.Err(err)
-				return
+		switch {
+		case o.s.list.W.Lookup(ip4.SrcIP):
+			if err = p.Accept(); err != nil {
+				j.Warning(err)
 			}
-			id, err := res.LastInsertId()
-			if err != nil {
-				j.Err(err)
-			}
-			o.s.banned_ct++
-			if !*nolog {
-				j.Infof("blacklist: nf %v %v %v", id, ip4.SrcIP.To4().String(), a[0])
-			}
+		case o.s.list.B.Lookup(ip4.SrcIP):
 			if err = p.Drop(); err != nil {
 				j.Warning(err)
 			}
-			return
+		default:
+			if a := o.s.rbl.Lookup(ip4.SrcIP, true); 0 < len(a) {
+				now := time.Now()
+				ip := ip4.SrcIP.To4().String()
+				o.s.list.B.Add(ip, &now)
+				res, err := o.s.db.ExecContext(o.s.gg, "insert or ignore into ip(ip, ban, ts, toml, rbl) values(:ip, 1, :ts, :toml, :rbl)", sql.Named("ip", ip), sql.Named("ts", now.Format(tsfmt)), sql.Named("toml", `nf`), sql.Named("rbl", a[0]))
+				if err != nil {
+					j.Warning(err)
+				}
+				id, err := res.LastInsertId()
+				if err != nil {
+					j.Warning(err)
+				}
+				o.s.banned_ct++
+				if !*nolog {
+					j.Infof("blacklist: nf %v %v %v", id, ip4.SrcIP.To4().String(), a[0])
+				}
+				if err = p.Drop(); err != nil {
+					j.Warning(err)
+				}
+			} else {
+				if err = p.Accept(); err != nil {
+					j.Warning(err)
+				}
+			}
 		}
 	}
-	if err := p.Accept(); err != nil {
-		j.Warning(err)
-	}
-	return
 }
 
 func (o *Server) run_nf() {
@@ -210,18 +215,8 @@ func (o *Server) expire() {
 			o.con_ct = 0
 			o.banned_ct = 0
 		case <-time.After(time.Hour * 24):
-			j.Info("begin expire:", len(o.list))
-			o.mu_list.Lock()
-			now := time.Now()
-			exp_ct := 0
-			for ipbin, ir := range o.list {
-				if ir.Ban && ir.T.Add(*ban_dur).Before(now) {
-					delete(o.list, ipbin)
-					exp_ct++
-				}
-			}
-			o.mu_list.Unlock()
-			j.Info("end expire:", exp_ct)
+			j.Info("begin expire:", o.list.B.Len())
+			j.Info("end expire:", o.list.B.Expire(*ban_dur))
 		}
 	}
 }
@@ -229,60 +224,46 @@ func (o *Server) expire() {
 func (o *Server) run(device, since string) {
 	key := o.gg.Register()
 	defer o.gg.Unregister(key)
-	o.mu_list.RLock()
-	bl := make([]string, 0, len(o.list))
-	for ip_bin, v := range o.list {
-		if v.Ban {
-			bl = append(bl, net.IP(ip_bin).String())
-		}
-	}
-	o.mu_list.RUnlock()
 	bset, e := nft.New_table(`inet`, `filter`, `banip`, device)
 	if e != nil {
 		j.Err(e)
 		return
 	}
-	if 0 < len(bl) {
-		bset.Add_set(bl...)
-	}
-	bl = nil
+	bset.Add_set(o.list.B.All()...)
 	bus := mbus.New_bus(o.gg)
 	c := make(chan *mbus.Msg, 256)
 	bus.Subscribe(c, filter.T_bl)
 	defer bus.Unsubscribe(c, filter.T_bl)
-	// list_mu must be used after run_filter
 	o.run_filter(bus, since)
 	for {
 		select {
 		case <-o.gg.Done():
-			return
 		case in := <-c:
 			switch in.Topic {
 			case filter.T_bl:
 				if a, ok := in.Data.(*filter.Action); ok {
 					ip := net.ParseIP(a.Ip).To4()
-					ip_bin := string(ip)
-					if !o.In_list(ip) {
-						o.mu_list.Lock()
-						ir := &Ip_row{Ban: true, T: time.Now()}
-						o.list[ip_bin] = ir
-						o.mu_list.Unlock()
+					if ip != nil {
+						j.Warning("invalid ip:", a.Ip)
+						return
+					}
+					switch {
+					case o.list.W.Lookup(ip) || o.list.B.Lookup(ip):
+					default:
+						ts := time.Now()
+						if err := o.list.B.Add(a.Ip, &ts); err != nil {
+							j.Warning(err)
+						}
 						if err := bset.Add_set(a.Ip); err != nil {
-							j.Err(err)
-							return
+							j.Warning(err)
 						}
 						var rbl_found interface{}
 						if a.Check_rbl {
-							select {
-							case <-o.gg.Done():
-								return
-							default:
-								if a := o.rbl.Lookup(ip, true); 0 < len(a) {
-									rbl_found = a[0]
-								}
+							if a := o.rbl.Lookup(ip, true); 0 < len(a) {
+								rbl_found = a[0]
 							}
 						}
-						res, err := o.db.ExecContext(o.gg, "insert or ignore into ip(ip, ban, ts, toml, rbl, log) values(:ip, 1, :ts, :toml, :rbl, :log)", sql.Named("ip", a.Ip), sql.Named("ts", ir.T.Format(tsfmt)), sql.Named("toml", a.Toml), sql.Named("rbl", rbl_found), sql.Named("log", a.Msg))
+						res, err := o.db.ExecContext(o.gg, "insert or ignore into ip(ip, ban, ts, toml, rbl, log) values(:ip, 1, :ts, :toml, :rbl, :log)", sql.Named("ip", a.Ip), sql.Named("ts", ts.Format(tsfmt)), sql.Named("toml", a.Toml), sql.Named("rbl", rbl_found), sql.Named("log", a.Msg))
 						if err != nil {
 							j.Err(err)
 							return
@@ -299,14 +280,6 @@ func (o *Server) run(device, since string) {
 			}
 		}
 	}
-}
-
-// value: whitelist: false, blacklist: true
-func (o *Server) In_list(ip net.IP) bool {
-	o.mu_list.RLock()
-	defer o.mu_list.RUnlock()
-	_, found := o.list[string(ip.To4())]
-	return found
 }
 
 func (o *Server) Wl(ip net.IP) {
@@ -371,7 +344,7 @@ func (o *Server) run_filter(bus *mbus.Bus, since string) {
 	enabled := false
 	tag := map[string]bool{}
 	for _, p := range toml {
-		f, err := filter.New(o.gg, bus, p, o, o.rbls)
+		f, err := filter.New(o.gg, bus, p, o.list, o.rbls)
 		if err != nil {
 			j.Err(err)
 			return

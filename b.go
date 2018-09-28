@@ -134,7 +134,7 @@ func main() {
 		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
 		j.Info("test:", *test)
 		bus := mbus.New_bus(gg)
-		if f, err := filter.New(gg, bus, *test, server.New(gg, u.HomeDir, rbls), rbls); err == nil {
+		if f, err := filter.New(gg, bus, *test, server.New(gg, u.HomeDir, rbls).WB(), rbls); err == nil {
 			go server.Journal(gg, bus, true, f.Tag, *since)
 		} else {
 			j.Err(err)
@@ -145,7 +145,7 @@ func main() {
 		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
 		j.Info("testdata:", *testdata)
 		bus := mbus.New_bus(gg)
-		if f, err := filter.New(gg, bus, *testdata, server.New(gg, u.HomeDir, rbls), rbls); err == nil {
+		if f, err := filter.New(gg, bus, *testdata, server.New(gg, u.HomeDir, rbls).WB(), rbls); err == nil {
 			f.Testdata()
 		} else {
 			j.Err(err)

@@ -89,9 +89,11 @@ func (o *Table) Flush_set() error {
 }
 
 func (o *Table) Add_set(ip ...string) error {
-	cmd := exec.Command("nft", "add", "element", o.Family, o.Table, o.Set, `{ `+strings.Join(ip, `,`)+` }`)
-	if b, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%v: %v: %s", cmd.Args, err, b)
+	if 0 < len(ip) {
+		cmd := exec.Command("nft", "add", "element", o.Family, o.Table, o.Set, `{ `+strings.Join(ip, `,`)+` }`)
+		if b, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("%v: %v: %s", cmd.Args, err, b)
+		}
 	}
 	return nil
 }

@@ -128,6 +128,16 @@ func (o *B) Expire(dur time.Duration) (expired int) {
 	return len(o.ip) - ct
 }
 
+func (o *B) All() (a []string) {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	a = make([]string, 0, len(o.ip))
+	for ip := range o.ip {
+		a = append(a, ip)
+	}
+	return
+}
+
 func (o *B) Len() int {
 	o.mu.RLock()
 	defer o.mu.RUnlock()

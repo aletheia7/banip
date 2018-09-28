@@ -4,6 +4,7 @@
 package filter
 
 import (
+	"banip/list"
 	br "banip/rbl"
 	"bytes"
 	"flag"
@@ -60,7 +61,7 @@ type Filter struct {
 	matched_u         map[string]bool
 	ignored           int
 	total             int
-	list              Get_it
+	list              *list.WB
 	rbl               *br.Search
 }
 
@@ -68,7 +69,7 @@ type Get_it interface {
 	In_list(ip net.IP) bool
 }
 
-func New(gg *gogroup.Group, bus *mbus.Bus, fn string, srv Get_it, rbls []string) (*Filter, error) {
+func New(gg *gogroup.Group, bus *mbus.Bus, fn string, list *list.WB, rbls []string) (*Filter, error) {
 	if ext := path.Ext(fn); ext != ".toml" {
 		e := fmt.Errorf("missing toml file: %v", fn)
 		j.Err(e)
@@ -84,7 +85,7 @@ func New(gg *gogroup.Group, bus *mbus.Bus, fn string, srv Get_it, rbls []string)
 		Ignore:    make([]*regexp.Regexp, 0),
 		testdata:  []string{},
 		matched_u: map[string]bool{},
-		list:      srv,
+		list:      list,
 		rbl:       br.New(gg, rbls),
 	}
 	_, err := toml.DecodeFile(fn, o)
@@ -146,7 +147,7 @@ func (o *Filter) check(in *mbus.Msg) {
 			for _, re := range o.Re {
 				if ip := re.ExpandString(nil, ipv4, msg, re.FindStringSubmatchIndex(msg)); ip != nil {
 					ipnet := net.ParseIP(string(ip))
-					if o.list.In_list(ipnet) {
+					if o.list.W.Lookup(ipnet) || o.list.B.Lookup(ipnet) {
 						return
 					}
 					if o.Rbl_must {
@@ -187,7 +188,7 @@ func (o *Filter) test(in *mbus.Msg) {
 				if s != nil {
 					if o.Rbl_must {
 						ipnet := net.ParseIP(string(s))
-						if o.list.In_list(ipnet) {
+						if o.list.W.Lookup(ipnet) || o.list.B.Lookup(ipnet) {
 							o.matched++
 							o.matched_u[string(s)] = true
 							if *pmatched {
