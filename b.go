@@ -76,7 +76,7 @@ func main() {
 	case 0 < len(*blip):
 		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
 		j.Info("blip:", *blip)
-		ip := net.ParseIP(*wlip)
+		ip := net.ParseIP(*blip)
 		if ip == nil {
 			j.Err("invalid ip", ip)
 			return
