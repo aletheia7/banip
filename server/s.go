@@ -206,6 +206,7 @@ func (o *Server) run_nf() {
 	q := New_queue(uint16(*queue_id), o)
 	go q.n.Start()
 	go o.expire()
+	go o.new_con()
 	j.Info("started")
 	<-o.gg.Done()
 	q.n.Stop()
@@ -264,7 +265,6 @@ func (o *Server) expire() {
 }
 
 func (o *Server) write_db(gg *gogroup.Group, cn_cache []*new_con, ins *sql.Stmt) error {
-	l := len(cn_cache)
 	tx, err := o.db.BeginTx(gg, nil)
 	if err != nil {
 		j.Err(err)
