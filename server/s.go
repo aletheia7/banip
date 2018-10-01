@@ -58,7 +58,7 @@ type Server struct {
 	rbl               *br.Search
 	rbls              []string
 	con_ct, banned_ct int
-	cnew              chan *new_con
+	// cnew              chan *new_con
 }
 
 func New(gg *gogroup.Group, home string, rbls []string) *Server {
@@ -69,7 +69,7 @@ func New(gg *gogroup.Group, home string, rbls []string) *Server {
 		db:   get_database(gg, home),
 		rbl:  br.New(gg, rbls),
 		rbls: rbls,
-		cnew: make(chan *new_con, 512),
+		// cnew: make(chan *new_con, 512),
 	}
 	if o.db == nil {
 		return o
@@ -154,7 +154,7 @@ func (o *Queue) Handle(p *nfqueue.Packet) {
 		return
 	}
 	o.s.con_ct++
-	o.s.cnew <- &new_con{ip: ip4.SrcIP, ts: time.Now()}
+	// o.s.cnew <- &new_con{ip: ip4.SrcIP, ts: time.Now()}
 	// j.Errf("debug rx %v:%d -> %v:%d\n", ip4.SrcIP, tcp.SrcPort, ip4.DstIP, tcp.DstPort)
 	select {
 	case <-o.s.gg.Done():
@@ -234,25 +234,25 @@ func (o *Server) new_con() {
 func (o *Server) expire() {
 	key := o.gg.Register()
 	defer o.gg.Unregister(key)
-	cn_cache := make([]*new_con, 0, 1000)
-	ins, err := o.db.PrepareContext(o.gg, "insert into con values(:ip, :ts)")
-	if err != nil {
-		j.Err(err)
-		return
-	}
-	defer ins.Close()
+	// cn_cache := make([]*new_con, 0, 1000)
+	// ins, err := o.db.PrepareContext(o.gg, "insert into con values(:ip, :ts)")
+	// if err != nil {
+	// 	j.Err(err)
+	// 	return
+	// }
+	// defer ins.Close()
 	for {
 		select {
 		case <-o.gg.Done():
-			tgg := gogroup.New(gogroup.With_timeout(gogroup.New(), time.Second*3))
-			o.write_db(tgg, cn_cache, ins)
+			// tgg := gogroup.New(gogroup.With_timeout(gogroup.New(), time.Second*3))
+			// o.write_db(tgg, cn_cache, ins)
 			return
-		case n := <-o.cnew:
-			cn_cache = append(cn_cache, n)
-		case <-time.After(time.Minute):
-			if err = o.write_db(o.gg, cn_cache, ins); err != nil {
-				return
-			}
+		// case <-o.cnew:
+		// cn_cache = append(cn_cache, n)
+		// case <-time.After(time.Minute):
+		// 	if err = o.write_db(o.gg, cn_cache, ins); err != nil {
+		// 		return
+		// 	}
 		case <-time.After(*stats_dur):
 			j.Infof("new cons: %v, new bans: %v\n", o.con_ct, o.banned_ct)
 			o.con_ct = 0
@@ -264,25 +264,25 @@ func (o *Server) expire() {
 	}
 }
 
-func (o *Server) write_db(gg *gogroup.Group, cn_cache []*new_con, ins *sql.Stmt) error {
-	tx, err := o.db.BeginTx(gg, nil)
-	if err != nil {
-		j.Err(err)
-		return err
-	}
-	for _, cn := range cn_cache {
-		if _, err = tx.Stmt(ins).ExecContext(gg, sql.Named("ip", cn.ip.To4().String()), sql.Named("ts", cn.ts.Format(tsfmthigh))); err != nil {
-			j.Err(err)
-			return err
-		}
-	}
-	if err = tx.Commit(); err != nil {
-		j.Err(err)
-		return err
-	}
-	cn_cache = cn_cache[:0]
-	return nil
-}
+// func (o *Server) write_db(gg *gogroup.Group, cn_cache []*new_con, ins *sql.Stmt) error {
+// 	tx, err := o.db.BeginTx(gg, nil)
+// 	if err != nil {
+// 		j.Err(err)
+// 		return err
+// 	}
+// 	for _, cn := range cn_cache {
+// 		if _, err = tx.Stmt(ins).ExecContext(gg, sql.Named("ip", cn.ip.To4().String()), sql.Named("ts", cn.ts.Format(tsfmthigh))); err != nil {
+// 			j.Err(err)
+// 			return err
+// 		}
+// 	}
+// 	if err = tx.Commit(); err != nil {
+// 		j.Err(err)
+// 		return err
+// 	}
+// 	cn_cache = cn_cache[:0]
+// 	return nil
+// }
 
 func (o *Server) run(device, since string) {
 	key := o.gg.Register()

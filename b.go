@@ -8,6 +8,7 @@ import (
 	"banip/nft"
 	br "banip/rbl"
 	"banip/server"
+	"banip/syn"
 	"flag"
 	"fmt"
 	"github.com/aletheia7/gogroup"
@@ -32,7 +33,8 @@ var (
 	rbl      = flag.String("rbl", "", "query rbls with IP and exit")
 	rbls_in  = flag.String("rbls", "dnsbl-1.uceprotect.net,dnsbl-2.uceprotect.net,dnsbl-3.uceprotect.net,sbl-xbl.spamhaus.org,bl.spamcop.net,dnsbl.sorbs.net", "rbls: comma separted, or set banip_rbls environment variable")
 	rbls     []string
-	nf_mode  = flag.Bool("nf", true, "blocks IP by rbl")
+	nf_mode  = flag.Bool("nf", false, "mode, blocks IP by rbl")
+	syn_mode = flag.Bool("syn", false, "mode, blocks IP by sync-recv")
 	device   = flag.String("device", "", "required netdev device; i.e. eth0, br0, enp2s0")
 	load_f2b = flag.String("load-f2b", "", "load <full path>/fail2ban.sqlite3 and exit")
 	ver      = flag.Bool("v", false, "version")
@@ -152,13 +154,20 @@ func main() {
 			gg.Cancel()
 			return
 		}
-	default:
+	case *syn_mode:
+		// todo rm
+		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
+		syn.New(gg)
+	case *nf_mode:
 		if len(*device) == 0 && !*nf_mode {
 			j.Err("missing device", *device, *nf_mode)
 			return
 		}
 		j.Info("version:", gogitver.Git())
 		server.New(gg, u.HomeDir, rbls).Run(*device, *since, *nf_mode)
+	default:
+		j.Err("choose a mode")
+		gg.Cancel()
 	}
 	defer gg.Wait()
 	<-gg.Done()
