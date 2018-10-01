@@ -42,6 +42,12 @@ var (
 )
 
 const tsfmt = `2006-01-02 15:04:05-07:00`
+const tsfmthigh = `2006-01-02 15:04:05.999-07:00`
+
+type new_con struct {
+	ip net.IP
+	ts time.Time
+}
 
 type Server struct {
 	gg   *gogroup.Group
@@ -52,6 +58,7 @@ type Server struct {
 	rbl               *br.Search
 	rbls              []string
 	con_ct, banned_ct int
+	cnew              chan *new_con
 }
 
 func New(gg *gogroup.Group, home string, rbls []string) *Server {
@@ -62,6 +69,7 @@ func New(gg *gogroup.Group, home string, rbls []string) *Server {
 		db:   get_database(gg, home),
 		rbl:  br.New(gg, rbls),
 		rbls: rbls,
+		cnew: make(chan *new_con, 512),
 	}
 	if o.db == nil {
 		return o
@@ -146,6 +154,7 @@ func (o *Queue) Handle(p *nfqueue.Packet) {
 		return
 	}
 	o.s.con_ct++
+	o.s.cnew <- &new_con{ip: ip4.SrcIP, ts: time.Now()}
 	// j.Errf("debug rx %v:%d -> %v:%d\n", ip4.SrcIP, tcp.SrcPort, ip4.DstIP, tcp.DstPort)
 	select {
 	case <-o.s.gg.Done():
@@ -203,7 +212,7 @@ func (o *Server) run_nf() {
 	defer j.Info("ended")
 }
 
-func (o *Server) expire() {
+func (o *Server) new_con() {
 	key := o.gg.Register()
 	defer o.gg.Unregister(key)
 	for {
@@ -219,6 +228,60 @@ func (o *Server) expire() {
 			j.Info("end expire:", o.list.B.Expire(*ban_dur))
 		}
 	}
+}
+
+func (o *Server) expire() {
+	key := o.gg.Register()
+	defer o.gg.Unregister(key)
+	cn_cache := make([]*new_con, 0, 1000)
+	ins, err := o.db.PrepareContext(o.gg, "insert into con values(:ip, :ts)")
+	if err != nil {
+		j.Err(err)
+		return
+	}
+	defer ins.Close()
+	for {
+		select {
+		case <-o.gg.Done():
+			tgg := gogroup.New(gogroup.With_timeout(gogroup.New(), time.Second*3))
+			o.write_db(tgg, cn_cache, ins)
+			return
+		case n := <-o.cnew:
+			cn_cache = append(cn_cache, n)
+		case <-time.After(time.Minute):
+			if err = o.write_db(o.gg, cn_cache, ins); err != nil {
+				return
+			}
+		case <-time.After(*stats_dur):
+			j.Infof("new cons: %v, new bans: %v\n", o.con_ct, o.banned_ct)
+			o.con_ct = 0
+			o.banned_ct = 0
+		case <-time.After(time.Hour * 24):
+			j.Info("begin expire:", o.list.B.Len())
+			j.Info("end expire:", o.list.B.Expire(*ban_dur))
+		}
+	}
+}
+
+func (o *Server) write_db(gg *gogroup.Group, cn_cache []*new_con, ins *sql.Stmt) error {
+	l := len(cn_cache)
+	tx, err := o.db.BeginTx(gg, nil)
+	if err != nil {
+		j.Err(err)
+		return err
+	}
+	for _, cn := range cn_cache {
+		if _, err = tx.Stmt(ins).ExecContext(gg, sql.Named("ip", cn.ip.To4().String()), sql.Named("ts", cn.ts.Format(tsfmthigh))); err != nil {
+			j.Err(err)
+			return err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		j.Err(err)
+		return err
+	}
+	cn_cache = cn_cache[:0]
+	return nil
 }
 
 func (o *Server) run(device, since string) {
