@@ -5,16 +5,19 @@ Wants = network-online.target
 After = network-online.target
 Requires =      nftables.service
 After =         nftables.service
-ConditionPathExists = /home/banip/go/bin/banip
+ConditionPathExists = /home/www/go/bin/banip
 StartLimitInterval = 0
 
 [Service]
-User = banip	
-Group = banip	
+User =	www 
+Group =	www 
 WorkingDirectory = ~
-AmbientCapabilities = cap_net_admin
-ExecStart = /home/banip/go/bin/banip -device eth0 -toml toml
-#ExecStart = /home/banip/go/bin/banip -device eth0 -toml toml -since '2018-09-16 21:21'
+; AmbientCapabilities = cap_net_admin
+ExecStart = /home/www/go/bin/banip -nf -rbls "rbl,sbl-xbl.spamhaus.org,bl.spamcop.net,all.s5h.net" -stats 10m
+; ExecStart = /home/www/go/bin/banip -rbls "rbl,sbl-xbl.spamhaus.org,bl.spamcop.net,dnsbl.sorbs.net"
+; ExecStart = /home/www/go/bin/banip -device eth0 -toml toml -since '2018-09-16 21:21'
+ReadWritePaths = /home/www
+PrivateTmp = true
 PrivateTmp = true
 ProtectSystem = strict
 ProtectControlGroups = true
