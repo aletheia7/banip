@@ -53,11 +53,11 @@ type Server struct {
 	gg   *gogroup.Group
 	home string
 	// 4 byte string key
-	list              *list.WB
-	db                *sql.DB
-	rbl               *br.Search
-	rbls              []string
-	con_ct, banned_ct int
+	list                                *list.WB
+	db                                  *sql.DB
+	rbl                                 *br.Search
+	rbls                                []string
+	con_ct, banned_ct, bl_ct, accept_ct int
 	// cnew              chan *new_con
 }
 
@@ -168,6 +168,7 @@ func (o *Queue) Handle(p *nfqueue.Packet) {
 				j.Warning(err)
 			}
 		case o.s.list.B.Lookup(ip4.SrcIP):
+			o.s.bl_ct++
 			if err = p.Drop(); err != nil {
 				j.Warning(err)
 			}
@@ -192,6 +193,7 @@ func (o *Queue) Handle(p *nfqueue.Packet) {
 					j.Warning(err)
 				}
 			} else {
+				o.s.accept_ct++
 				if err = p.Accept(); err != nil {
 					j.Warning(err)
 				}
@@ -206,7 +208,7 @@ func (o *Server) run_nf() {
 	q := New_queue(uint16(*queue_id), o)
 	go q.n.Start()
 	go o.expire()
-	go o.new_con()
+	// go o.new_con()
 	j.Info("started")
 	<-o.gg.Done()
 	q.n.Stop()
@@ -254,7 +256,7 @@ func (o *Server) expire() {
 		// 		return
 		// 	}
 		case <-time.After(*stats_dur):
-			j.Infof("new cons: %v, new bans: %v\n", o.con_ct, o.banned_ct)
+			j.Infof("new cons: %v, new bans: %v, bl: %v, accept: %v\n", o.con_ct, o.banned_ct, o.bl_ct, o.accept_ct)
 			o.con_ct = 0
 			o.banned_ct = 0
 		case <-time.After(time.Hour * 24):
