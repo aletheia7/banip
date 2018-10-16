@@ -259,6 +259,7 @@ func (o *Server) expire() {
 			j.Infof("new cons: %v, new bans: %v, bl: %v, accept: %v\n", o.con_ct, o.banned_ct, o.bl_ct, o.accept_ct)
 			o.con_ct = 0
 			o.banned_ct = 0
+			o.accept_ct = 0
 		case <-time.After(time.Hour * 24):
 			j.Info("begin expire:", o.list.B.Len())
 			j.Info("end expire:", o.list.B.Expire(*ban_dur))
