@@ -53,12 +53,16 @@ type Server struct {
 	gg   *gogroup.Group
 	home string
 	// 4 byte string key
-	list                                *list.WB
-	db                                  *sql.DB
-	rbl                                 *br.Search
-	rbls                                []string
-	con_ct, banned_ct, bl_ct, accept_ct int
+	list  *list.WB
+	db    *sql.DB
+	rbl   *br.Search
+	rbls  []string
+	stats stat
 	// cnew              chan *new_con
+}
+
+type stat struct {
+	con, banned, bl, accept int
 }
 
 func New(gg *gogroup.Group, home string, rbls []string) *Server {
@@ -153,7 +157,7 @@ func (o *Queue) Handle(p *nfqueue.Packet) {
 		j.Warning("DecodeLayers err", err)
 		return
 	}
-	o.s.con_ct++
+	o.s.stats.con++
 	// o.s.cnew <- &new_con{ip: ip4.SrcIP, ts: time.Now()}
 	// j.Errf("debug rx %v:%d -> %v:%d\n", ip4.SrcIP, tcp.SrcPort, ip4.DstIP, tcp.DstPort)
 	select {
@@ -168,7 +172,7 @@ func (o *Queue) Handle(p *nfqueue.Packet) {
 				j.Warning(err)
 			}
 		case o.s.list.B.Lookup(ip4.SrcIP):
-			o.s.bl_ct++
+			o.s.stats.bl++
 			if err = p.Drop(); err != nil {
 				j.Warning(err)
 			}
@@ -185,7 +189,7 @@ func (o *Queue) Handle(p *nfqueue.Packet) {
 				if err != nil {
 					j.Warning(err)
 				}
-				o.s.banned_ct++
+				o.s.stats.banned++
 				if !*nolog {
 					j.Infof("blacklist: nf %v %v %v", id, ip4.SrcIP.To4().String(), a[0])
 				}
@@ -193,7 +197,7 @@ func (o *Queue) Handle(p *nfqueue.Packet) {
 					j.Warning(err)
 				}
 			} else {
-				o.s.accept_ct++
+				o.s.stats.accept++
 				if err = p.Accept(); err != nil {
 					j.Warning(err)
 				}
@@ -213,24 +217,6 @@ func (o *Server) run_nf() {
 	<-o.gg.Done()
 	q.n.Stop()
 	defer j.Info("ended")
-}
-
-func (o *Server) new_con() {
-	key := o.gg.Register()
-	defer o.gg.Unregister(key)
-	for {
-		select {
-		case <-o.gg.Done():
-			return
-		case <-time.After(*stats_dur):
-			j.Infof("new cons: %v, new bans: %v\n", o.con_ct, o.banned_ct)
-			o.con_ct = 0
-			o.banned_ct = 0
-		case <-time.After(time.Hour * 24):
-			j.Info("begin expire:", o.list.B.Len())
-			j.Info("end expire:", o.list.B.Expire(*ban_dur))
-		}
-	}
 }
 
 func (o *Server) expire() {
@@ -256,10 +242,8 @@ func (o *Server) expire() {
 		// 		return
 		// 	}
 		case <-time.After(*stats_dur):
-			j.Infof("new cons: %v, new bans: %v, bl: %v, accept: %v\n", o.con_ct, o.banned_ct, o.bl_ct, o.accept_ct)
-			o.con_ct = 0
-			o.banned_ct = 0
-			o.accept_ct = 0
+			j.Infof("new cons: %v, new bans: %v, bl: %v, accept: %v\n", o.stats.con, o.stats.banned, o.stats.bl, o.stats.accept)
+			o.stats = stat{}
 		case <-time.After(time.Hour * 24):
 			j.Info("begin expire:", o.list.B.Len())
 			j.Info("end expire:", o.list.B.Expire(*ban_dur))
