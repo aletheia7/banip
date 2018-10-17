@@ -26,7 +26,7 @@ var (
 	test     = flag.String("test", "", "run path to toml, use journalctl and exit")
 	test_nft = flag.Bool("testnft", false, "add banip")
 	blip     = flag.String("blip", "", "blacklist IP and exit")
-	wlip     = flag.String("wlip", "", "whitelist IP and exit")
+	wlip     = flag.String("wlip", "", "whitelist IP/CIDR and exit")
 	rmip     = flag.String("rmip", "", "remove IP and exit")
 	qip      = flag.String("qip", "", "remove IP and exit")
 	since    = flag.String("since", "", "passed to journalctl --since")
@@ -67,45 +67,25 @@ func main() {
 	case 0 < len(*wlip):
 		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
 		j.Info("wlip:", *wlip)
-		ip := net.ParseIP(*wlip)
-		if ip == nil {
-			j.Err("invalid ip", ip)
-			return
-		}
-		server.New(gg, u.HomeDir, rbls).Wl(ip)
+		server.New(gg, u.HomeDir, rbls).Wl(*wlip)
 		gg.Cancel()
 		return
 	case 0 < len(*blip):
 		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
 		j.Info("blip:", *blip)
-		ip := net.ParseIP(*blip)
-		if ip == nil {
-			j.Err("invalid ip", ip)
-			return
-		}
-		server.New(gg, u.HomeDir, rbls).Bl(ip)
+		server.New(gg, u.HomeDir, rbls).Bl(*blip)
 		gg.Cancel()
 		return
 	case 0 < len(*rmip):
 		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
 		j.Info("rmip:", *rmip)
-		ip := net.ParseIP(*rmip)
-		if ip == nil {
-			j.Err("invalid ip", ip)
-			return
-		}
-		server.New(gg, u.HomeDir, rbls).Rm(ip)
+		server.New(gg, u.HomeDir, rbls).Rm(*rmip)
 		gg.Cancel()
 		return
 	case 0 < len(*qip):
 		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
 		j.Info("qip:", *qip)
-		ip := net.ParseIP(*qip)
-		if ip == nil {
-			j.Err("invalid ip", ip)
-			return
-		}
-		server.New(gg, u.HomeDir, rbls).Q(ip)
+		server.New(gg, u.HomeDir, rbls).Q(*qip)
 		gg.Cancel()
 		return
 	case *test_nft:

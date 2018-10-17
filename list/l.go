@@ -48,18 +48,32 @@ func (o *W) Lookup(ip net.IP) (found bool) {
 func (o *W) Add(ip string) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	v, err := Valid_ip_cidr(ip)
+	if err != nil {
+		return err
+	}
+	switch t := v.(type) {
+	case *net.IP:
+		o.ip[ip2bin(*t)] = true
+	case *net.IPNet:
+		o.net[t] = true
+	}
+	return nil
+}
+
+// Returns *net.IP | *net.IPNet, error
+func Valid_ip_cidr(ip string) (interface{}, error) {
 	v := net.ParseIP(ip)
 	if v == nil {
 		_, ipnet, err := net.ParseCIDR(ip)
 		if err == nil {
-			o.net[ipnet] = true
+			return ipnet, nil
 		} else {
-			return err
+			return ``, err
 		}
 	} else {
-		o.ip[ip2bin(v)] = true
+		return &v, nil
 	}
-	return nil
 }
 
 // ip: net.IP or net.IPNet

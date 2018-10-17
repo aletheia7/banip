@@ -62,7 +62,7 @@ type Server struct {
 }
 
 type stat struct {
-	con, banned, bl, accept int
+	con, banned, wl, bl, accept int
 }
 
 func New(gg *gogroup.Group, home string, rbls []string) *Server {
@@ -168,6 +168,7 @@ func (o *Queue) Handle(p *nfqueue.Packet) {
 	default:
 		switch {
 		case o.s.list.W.Lookup(ip4.SrcIP):
+			o.s.stats.wl++
 			if err = p.Accept(); err != nil {
 				j.Warning(err)
 			}
@@ -242,7 +243,7 @@ func (o *Server) expire() {
 		// 		return
 		// 	}
 		case <-time.After(*stats_dur):
-			j.Infof("new cons: %v, new bans: %v, bl: %v, accept: %v\n", o.stats.con, o.stats.banned, o.stats.bl, o.stats.accept)
+			j.Infof("new cons: %v, new bans: %v, wl: %v, bl: %v, accept: %v\n", o.stats.con, o.stats.banned, o.stats.wl, o.stats.bl, o.stats.accept)
 			o.stats = stat{}
 		case <-time.After(time.Hour * 24):
 			j.Info("begin expire:", o.list.B.Len())
@@ -332,20 +333,50 @@ func (o *Server) run(device, since string) {
 	}
 }
 
-func (o *Server) Wl(ip net.IP) {
-	if _, err := o.db.ExecContext(o.gg, "replace into ip(ip, ban, ts, toml) values(:ip, 0, :ts, null)", sql.Named("ip", ip.To4().String()), sql.Named("ts", time.Now().Format(tsfmt))); err != nil {
+func (o *Server) Wl(ip string) {
+	i, err := list.Valid_ip_cidr(ip)
+	if err != nil {
+		j.Err(err)
+		return
+	}
+	var s string
+	switch t := i.(type) {
+	case *net.IP:
+		s = t.String()
+	case *net.IPNet:
+		s = t.String()
+	default:
+		j.Err("unknown value:", i)
+		return
+	}
+	if _, err := o.db.ExecContext(o.gg, "replace into ip(ip, ban, ts, toml) values(:ip, 0, :ts, null)", sql.Named("ip", s), sql.Named("ts", time.Now().Format(tsfmt))); err != nil {
 		j.Err(err)
 	}
 }
 
-func (o *Server) Q(ip net.IP) {
+func (o *Server) Q(ip string) {
 	var (
 		oid            int64
 		ban            bool
 		ts             time.Time
 		toml, log, rbl sql.NullString
 	)
-	err := o.db.QueryRowContext(o.gg, "select oid, ban, ts, toml, log, rbl from ip where ip = :ip", sql.Named("ip", ip.To4().String())).Scan(&oid, &ban, (*Stime)(&ts), &toml, &log, &rbl)
+	i, err := list.Valid_ip_cidr(ip)
+	if err != nil {
+		j.Err(err)
+		return
+	}
+	var s string
+	switch t := i.(type) {
+	case *net.IP:
+		s = t.String()
+	case *net.IPNet:
+		s = t.String()
+	default:
+		j.Err("unknown value:", i)
+		return
+	}
+	err = o.db.QueryRowContext(o.gg, "select oid, ban, ts, toml, log, rbl from ip where ip = :ip", sql.Named("ip", s)).Scan(&oid, &ban, (*Stime)(&ts), &toml, &log, &rbl)
 	switch err {
 	case sql.ErrNoRows:
 		return
@@ -368,14 +399,45 @@ func (o *Server) Q(ip net.IP) {
 	}
 }
 
-func (o *Server) Bl(ip net.IP) {
-	if _, err := o.db.ExecContext(o.gg, "insert or ignore into ip(ip, ban, ts, toml) values(:ip, 1, :ts, 'blip')", sql.Named("ip", ip.To4().String()), sql.Named("ts", time.Now().Format(tsfmt))); err != nil {
+func (o *Server) Bl(ip string) {
+	i, err := list.Valid_ip_cidr(ip)
+	if err != nil {
+		j.Err(err)
+		return
+	}
+	var s string
+	switch t := i.(type) {
+	case *net.IP:
+		s = t.String()
+	case *net.IPNet:
+		j.Err("cannot blacklist network:", ip)
+		return
+	default:
+		j.Err("unknown value:", i)
+		return
+	}
+	if _, err := o.db.ExecContext(o.gg, "insert or ignore into ip(ip, ban, ts, toml) values(:ip, 1, :ts, 'blip')", sql.Named("ip", s), sql.Named("ts", time.Now().Format(tsfmt))); err != nil {
 		j.Err(err)
 	}
 }
 
-func (o *Server) Rm(ip net.IP) {
-	if _, err := o.db.ExecContext(o.gg, "delete from ip where ip = :ip", sql.Named("ip", ip.To4().String())); err != nil {
+func (o *Server) Rm(ip string) {
+	i, err := list.Valid_ip_cidr(ip)
+	if err != nil {
+		j.Err(err)
+		return
+	}
+	var s string
+	switch t := i.(type) {
+	case *net.IP:
+		s = t.String()
+	case *net.IPNet:
+		s = t.String()
+	default:
+		j.Err("unknown value:", i)
+		return
+	}
+	if _, err := o.db.ExecContext(o.gg, "delete from ip where ip = :ip", sql.Named("ip", s)); err != nil {
 		j.Err(err)
 	}
 }
