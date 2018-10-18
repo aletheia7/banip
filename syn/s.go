@@ -1,6 +1,7 @@
 package syn
 
 import (
+	"banip/server"
 	"bytes"
 	"flag"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"github.com/aletheia7/sd"
 	"net"
 	"os/exec"
+	"sync"
 	"time"
 )
 
@@ -17,24 +19,29 @@ var (
 	syn_in  = flag.String("syn-src", "ss", "input: ss or <file name>")
 )
 
+const expire_sent = time.Hour
+
 type Server struct {
-	gg   *gogroup.Group
-	args []string
-	out  bytes.Buffer
-	addr []net.IP
+	gg         *gogroup.Group
+	args       []string
+	out        bytes.Buffer
+	addr       []string
+	sent_mu    sync.Mutex
+	sent_to_bl map[string]time.Time
+	srv        *server.Server
 }
 
-func New(gg *gogroup.Group) {
+func New(gg *gogroup.Group, srv *server.Server) {
 	r := &Server{
-		gg:   gg,
-		addr: make([]net.IP, 0, 4),
+		gg:         gg,
+		addr:       make([]string, 0, 4),
+		sent_to_bl: map[string]time.Time{},
+		srv:        srv,
 	}
 	switch {
 	case *syn_in == "ss":
-		j.Info("syn-src", *syn_in)
 		r.args = []string{"ss", "-t4naH", "-o", "state", "syn-recv"}
 	default:
-		j.Info("syn-src:", *syn_in)
 		r.args = []string{"cat", *syn_in}
 	}
 	doerr := func(err error) {
@@ -53,7 +60,7 @@ func New(gg *gogroup.Group) {
 			return
 		}
 		for _, addr := range a {
-			ip, _, err := net.ParseCIDR(addr.String())
+			ip, _, _ := net.ParseCIDR(addr.String())
 			if ip == nil {
 				doerr(fmt.Errorf("cannot parse ip: %v %v", addr.String(), err))
 				return
@@ -61,11 +68,33 @@ func New(gg *gogroup.Group) {
 			if ip.IsLoopback() {
 				continue
 			}
-			r.addr = append(r.addr, ip)
+			r.addr = append(r.addr, ip.String())
 		}
 	}
-	j.Info(r.addr)
 	go r.run()
+	go r.expire()
+}
+
+func (o *Server) expire() {
+	key := o.gg.Register()
+	defer o.gg.Unregister(key)
+	ticker := time.NewTicker(time.Minute * 10)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-o.gg.Done():
+			return
+		case <-ticker.C:
+			now := time.Now()
+			o.sent_mu.Lock()
+			for ip, ts := range o.sent_to_bl {
+				if ts.Add(expire_sent).Before(now) {
+					delete(o.sent_to_bl, ip)
+				}
+			}
+			o.sent_mu.Unlock()
+		}
+	}
 }
 
 func (o *Server) run() {
@@ -87,7 +116,7 @@ func (o *Server) run() {
 }
 
 type sc struct {
-	sent bool
+	sent *time.Time
 	ct   int
 }
 
@@ -100,25 +129,42 @@ func (o *Server) parse() (err error) {
 		j.Err(cmd.Args, err)
 		return
 	}
-	// ip := map[string]*sc{}
+	ip := map[string]*sc{}
+line_loop:
 	for _, line := range bytes.Split(o.out.Bytes(), []byte{10}) {
 		if len(line) == 0 {
 			continue
 		}
-		// j.Infof("%v %s", len(line), line)
 		a := bytes.Fields(line)
-		j.Infof("%s %s\n", a[2], a[3])
-
-		// st, ok := ip[t]
-		// if !ok {
-		// 	ip[t] = &sc{ct: 1}
-		// 	continue
-		// }
-		// st.ct++
+		remote_ip, _, err := net.SplitHostPort(string(a[3]))
+		if err != nil {
+			j.Err(err)
+			return err
+		}
+		for _, a := range o.addr {
+			if remote_ip == a {
+				continue line_loop
+			}
+		}
+		st, ok := ip[remote_ip]
+		if ok {
+			st.ct++
+		} else {
+			st = &sc{}
+			ip[remote_ip] = st
+		}
+		if st.sent == nil && *max_syn <= st.ct+1 {
+			o.sent_mu.Lock()
+			if _, ok := o.sent_to_bl[remote_ip]; ok {
+				o.sent_mu.Unlock()
+				continue
+			}
+			o.sent_to_bl[remote_ip] = time.Now()
+			o.sent_mu.Unlock()
+			// todo uncomment
+			//o.srv.Bl(remote_ip)
+			j.Info("syn ban", remote_ip)
+		}
 	}
-	// if !st.sent && *max_syn <= st.ct {
-	// 	st.sent = true
-	// 	j.Info("ban", t)
-	// }
 	return
 }

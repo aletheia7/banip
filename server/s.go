@@ -53,7 +53,7 @@ type Server struct {
 	gg   *gogroup.Group
 	home string
 	// 4 byte string key
-	list  *list.WB
+	wb    *list.WB
 	db    *sql.DB
 	rbl   *br.Search
 	rbls  []string
@@ -69,7 +69,7 @@ func New(gg *gogroup.Group, home string, rbls []string) *Server {
 	o := &Server{
 		gg:   gg,
 		home: home,
-		list: list.New(),
+		wb:   list.New(),
 		db:   get_database(gg, home),
 		rbl:  br.New(gg, rbls),
 		rbls: rbls,
@@ -101,22 +101,22 @@ func New(gg *gogroup.Group, home string, rbls []string) *Server {
 			continue
 		}
 		if ban == 0 {
-			o.list.W.Add(ip)
+			o.wb.W.Add(ip)
 		} else {
-			o.list.B.Add(ip, &ts)
+			o.wb.B.Add(ip, &ts)
 		}
 	}
 	if err = rows.Err(); err != nil {
 		j.Err(err)
 	}
-	j.Info("whitelist:", o.list.W.Len())
-	j.Info("blacklist:", o.list.B.Len())
+	j.Info("whitelist:", o.wb.W.Len())
+	j.Info("blacklist:", o.wb.B.Len())
 	j.Info("expired:", exp_ct)
 	return o
 }
 
 func (o *Server) WB() *list.WB {
-	return o.list
+	return o.wb
 }
 
 var run_once sync.Once
@@ -167,12 +167,12 @@ func (o *Queue) Handle(p *nfqueue.Packet) {
 		}
 	default:
 		switch {
-		case o.s.list.W.Lookup(ip4.SrcIP):
+		case o.s.wb.W.Lookup(ip4.SrcIP):
 			o.s.stats.wl++
 			if err = p.Accept(); err != nil {
 				j.Warning(err)
 			}
-		case o.s.list.B.Lookup(ip4.SrcIP):
+		case o.s.wb.B.Lookup(ip4.SrcIP):
 			o.s.stats.bl++
 			if err = p.Drop(); err != nil {
 				j.Warning(err)
@@ -181,7 +181,7 @@ func (o *Queue) Handle(p *nfqueue.Packet) {
 			if a := o.s.rbl.Lookup(ip4.SrcIP, true); 0 < len(a) {
 				now := time.Now()
 				ip := ip4.SrcIP.To4().String()
-				o.s.list.B.Add(ip, &now)
+				o.s.wb.B.Add(ip, &now)
 				res, err := o.s.db.ExecContext(o.s.gg, "insert or ignore into ip(ip, ban, ts, toml, rbl) values(:ip, 1, :ts, :toml, :rbl)", sql.Named("ip", ip), sql.Named("ts", now.Format(tsfmt)), sql.Named("toml", `nf`), sql.Named("rbl", a[0]))
 				if err != nil {
 					j.Warning(err)
@@ -246,8 +246,8 @@ func (o *Server) expire() {
 			j.Infof("new cons: %v, new bans: %v, wl: %v, bl: %v, accept: %v\n", o.stats.con, o.stats.banned, o.stats.wl, o.stats.bl, o.stats.accept)
 			o.stats = stat{}
 		case <-time.After(time.Hour * 24):
-			j.Info("begin expire:", o.list.B.Len())
-			j.Info("end expire:", o.list.B.Expire(*ban_dur))
+			j.Info("begin expire:", o.wb.B.Len())
+			j.Info("end expire:", o.wb.B.Expire(*ban_dur))
 		}
 	}
 }
@@ -280,7 +280,7 @@ func (o *Server) run(device, since string) {
 		j.Err(e)
 		return
 	}
-	bset.Add_set(o.list.B.All()...)
+	bset.Add_set(o.wb.B.All()...)
 	bus := mbus.New_bus(o.gg)
 	c := make(chan *mbus.Msg, 256)
 	bus.Subscribe(c, filter.T_bl)
@@ -299,10 +299,10 @@ func (o *Server) run(device, since string) {
 						return
 					}
 					switch {
-					case o.list.W.Lookup(ip) || o.list.B.Lookup(ip):
+					case o.wb.W.Lookup(ip) || o.wb.B.Lookup(ip):
 					default:
 						ts := time.Now()
-						if err := o.list.B.Add(a.Ip, &ts); err != nil {
+						if err := o.wb.B.Add(a.Ip, &ts); err != nil {
 							j.Warning(err)
 						}
 						if err := bset.Add_set(a.Ip); err != nil {
@@ -349,6 +349,7 @@ func (o *Server) Wl(ip string) {
 		j.Err("unknown value:", i)
 		return
 	}
+	o.wb.W.Add(s)
 	if _, err := o.db.ExecContext(o.gg, "replace into ip(ip, ban, ts, toml) values(:ip, 0, :ts, null)", sql.Named("ip", s), sql.Named("ts", time.Now().Format(tsfmt))); err != nil {
 		j.Err(err)
 	}
@@ -416,6 +417,8 @@ func (o *Server) Bl(ip string) {
 		j.Err("unknown value:", i)
 		return
 	}
+	ts := time.Now()
+	o.wb.B.Add(ip, &ts)
 	if _, err := o.db.ExecContext(o.gg, "insert or ignore into ip(ip, ban, ts, toml) values(:ip, 1, :ts, 'blip')", sql.Named("ip", s), sql.Named("ts", time.Now().Format(tsfmt))); err != nil {
 		j.Err(err)
 	}
@@ -437,6 +440,8 @@ func (o *Server) Rm(ip string) {
 		j.Err("unknown value:", i)
 		return
 	}
+	o.wb.W.Remove(s)
+	o.wb.B.Remove(s)
 	if _, err := o.db.ExecContext(o.gg, "delete from ip where ip = :ip", sql.Named("ip", s)); err != nil {
 		j.Err(err)
 	}
@@ -456,7 +461,7 @@ func (o *Server) run_filter(bus *mbus.Bus, since string) {
 	enabled := false
 	tag := map[string]bool{}
 	for _, p := range toml {
-		f, err := filter.New(o.gg, bus, p, o.list, o.rbls)
+		f, err := filter.New(o.gg, bus, p, o.wb, o.rbls)
 		if err != nil {
 			j.Err(err)
 			return

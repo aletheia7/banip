@@ -60,6 +60,7 @@ func main() {
 		j.Err(err)
 		return
 	}
+	var srv *server.Server
 	switch {
 	case 0 < len(*rbl):
 		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
@@ -135,16 +136,20 @@ func main() {
 			return
 		}
 	case *syn_mode:
-		// todo rm
-		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
-		syn.New(gg)
+		if srv == nil {
+			srv = server.New(gg, u.HomeDir, rbls)
+		}
+		syn.New(gg, srv)
 	case *nf_mode:
 		if len(*device) == 0 && !*nf_mode {
 			j.Err("missing device", *device, *nf_mode)
 			return
 		}
+		if srv == nil {
+			srv = server.New(gg, u.HomeDir, rbls)
+		}
 		j.Info("version:", gogitver.Git())
-		server.New(gg, u.HomeDir, rbls).Run(*device, *since, *nf_mode)
+		srv.Run(*device, *since, *nf_mode)
 	default:
 		j.Err("choose a mode")
 		gg.Cancel()
