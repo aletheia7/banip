@@ -111,20 +111,27 @@ func main() {
 			gg.Cancel()
 			return
 		}
-	case *syn_mode:
-		if srv == nil {
-			srv = server.New(gg, u.HomeDir, rbls)
-		}
-		syn.New(gg, srv)
-	case *nf_mode:
-		if srv == nil {
-			srv = server.New(gg, u.HomeDir, rbls)
-		}
-		j.Info("version:", gogitver.Git())
-		srv.Run(*since, *nf_mode)
 	default:
-		j.Err("choose a mode")
-		gg.Cancel()
+		good := false
+		if *syn_mode {
+			good = true
+			if srv == nil {
+				srv = server.New(gg, u.HomeDir, rbls)
+			}
+			syn.New(gg, srv)
+		}
+		if *nf_mode {
+			good = true
+			if srv == nil {
+				srv = server.New(gg, u.HomeDir, rbls)
+			}
+			j.Info("version:", gogitver.Git())
+			srv.Run(*since, *nf_mode)
+		}
+		if !good {
+			j.Err("choose a mode")
+			gg.Cancel()
+		}
 	}
 	defer gg.Wait()
 	<-gg.Done()
