@@ -5,12 +5,10 @@ package main
 
 import (
 	"banip/filter"
-	"banip/nft"
 	br "banip/rbl"
 	"banip/server"
 	"banip/syn"
 	"flag"
-	"fmt"
 	"github.com/aletheia7/gogroup"
 	"github.com/aletheia7/mbus"
 	"github.com/aletheia7/sd"
@@ -24,7 +22,6 @@ import (
 var (
 	testdata = flag.String("testdata", "", "run path to toml, use testdata and exit")
 	test     = flag.String("test", "", "run path to toml, use journalctl and exit")
-	test_nft = flag.Bool("testnft", false, "add banip")
 	blip     = flag.String("blip", "", "blacklist IP and exit")
 	wlip     = flag.String("wlip", "", "whitelist IP/CIDR and exit")
 	rmip     = flag.String("rmip", "", "remove IP and exit")
@@ -35,7 +32,6 @@ var (
 	rbls     []string
 	nf_mode  = flag.Bool("nf", false, "mode, blocks IP by rbl")
 	syn_mode = flag.Bool("syn", false, "mode, blocks IP by sync-recv")
-	device   = flag.String("device", "", "required netdev device; i.e. eth0, br0, enp2s0")
 	load_f2b = flag.String("load-f2b", "", "load <full path>/fail2ban.sqlite3 and exit")
 	ver      = flag.Bool("v", false, "version")
 	j        = sd.New()
@@ -74,7 +70,7 @@ func main() {
 	case 0 < len(*blip):
 		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
 		j.Info("blip:", *blip)
-		server.New(gg, u.HomeDir, rbls).Bl(*blip)
+		server.New(gg, u.HomeDir, rbls).Bl(*blip, "blip", nil, nil)
 		gg.Cancel()
 		return
 	case 0 < len(*rmip):
@@ -88,26 +84,6 @@ func main() {
 		j.Info("qip:", *qip)
 		server.New(gg, u.HomeDir, rbls).Q(*qip)
 		gg.Cancel()
-		return
-	case *test_nft:
-		j = sd.New(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
-		if len(*device) == 0 {
-			j.Err("missing device", *device)
-			flag.PrintDefaults()
-			return
-		}
-		t, err := nft.New_table(`inet`, `filter`, `banip`, *device)
-		if err != nil {
-			j.Err(err.Err)
-			j.Err(string(err.Output))
-			return
-		}
-		l := 10
-		ip := make([]string, 0, l)
-		for i := 1; i < l; i++ {
-			ip = append(ip, fmt.Sprintf("127.99.0..%v", i))
-		}
-		t.Add_set(ip...)
 		return
 	case 0 < len(*load_f2b):
 		j = sd.New(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
@@ -141,15 +117,11 @@ func main() {
 		}
 		syn.New(gg, srv)
 	case *nf_mode:
-		if len(*device) == 0 && !*nf_mode {
-			j.Err("missing device", *device, *nf_mode)
-			return
-		}
 		if srv == nil {
 			srv = server.New(gg, u.HomeDir, rbls)
 		}
 		j.Info("version:", gogitver.Git())
-		srv.Run(*device, *since, *nf_mode)
+		srv.Run(*since, *nf_mode)
 	default:
 		j.Err("choose a mode")
 		gg.Cancel()

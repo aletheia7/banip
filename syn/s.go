@@ -100,6 +100,7 @@ func (o *Server) expire() {
 func (o *Server) run() {
 	key := o.gg.Register()
 	defer o.gg.Unregister(key)
+	j.Info("mode: syn")
 	if o.parse() != nil {
 		return
 	}
@@ -146,6 +147,10 @@ line_loop:
 				continue line_loop
 			}
 		}
+		remote_ipb := net.ParseIP(remote_ip)
+		if o.srv.WB().W.Lookup(remote_ipb.To4()) {
+			continue line_loop
+		}
 		st, ok := ip[remote_ip]
 		if ok {
 			st.ct++
@@ -162,7 +167,7 @@ line_loop:
 			o.sent_to_bl[remote_ip] = time.Now()
 			o.sent_mu.Unlock()
 			// todo uncomment
-			//o.srv.Bl(remote_ip)
+			// id := o.srv.Bl(remote_ip, `syn ban`, nil, nil)
 			j.Info("syn ban", remote_ip)
 		}
 	}
