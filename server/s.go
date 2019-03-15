@@ -98,9 +98,10 @@ func New(gg *gogroup.Group, home string, rbls []string) *Server {
 			exp_ct++
 			continue
 		}
-		if ban == 0 {
+		switch {
+		case ban == 0:
 			o.wb.W.Add(ip)
-		} else {
+		case !o.wb.W.Lookup(net.ParseIP(ip)):
 			o.wb.B.Add(ip, &ts)
 		}
 	}
@@ -310,7 +311,7 @@ func (o *Server) Q(ip string) {
 		j.Err("unknown value:", i)
 		return
 	}
-	err = o.db.QueryRowContext(o.gg, "select oid, ban, ts, toml, log, rbl from ip where ip = :ip", sql.Named("ip", s)).Scan(&oid, &ban, (*Stime)(&ts), &toml, &log, &rbl)
+	err = o.db.QueryRowContext(o.gg, "select oid, ban, ts, toml, log, rbl from ip where ip = :ip order by ban limit 1", sql.Named("ip", s)).Scan(&oid, &ban, (*Stime)(&ts), &toml, &log, &rbl)
 	switch err {
 	case sql.ErrNoRows:
 		return
