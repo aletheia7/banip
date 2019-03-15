@@ -25,7 +25,7 @@ var (
 	blip     = flag.String("blip", "", "blacklist IP and exit")
 	wlip     = flag.String("wlip", "", "whitelist IP/CIDR and exit")
 	rmip     = flag.String("rmip", "", "remove IP and exit")
-	qip      = flag.String("qip", "", "remove IP and exit")
+	qip      = flag.String("qip", "", "query IP and exit")
 	since    = flag.String("since", "", "passed to journalctl --since")
 	rbl      = flag.String("rbl", "", "query rbls with IP and exit")
 	rbls_in  = flag.String("rbls", "dnsbl-1.uceprotect.net,dnsbl-2.uceprotect.net,dnsbl-3.uceprotect.net,sbl-xbl.spamhaus.org,bl.spamcop.net,dnsbl.sorbs.net", "rbls: comma separted, or set banip_rbls environment variable")
