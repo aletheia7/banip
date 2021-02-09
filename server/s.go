@@ -15,8 +15,8 @@ import (
 	"fmt"
 	"github.com/aletheia7/gogroup"
 	"github.com/aletheia7/mbus"
-	"github.com/aletheia7/nfqueue"
 	"github.com/aletheia7/sd"
+	nfqueue "github.com/florianl/go-nfqueue"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	_ "github.com/mattn/go-sqlite3"
@@ -130,80 +130,91 @@ func (o *Server) Run(since string, nf_mode bool) {
 	})
 }
 
-type Queue struct {
-	n *nfqueue.Queue
-	s *Server
-}
-
-func New_queue(id uint16, s *Server) *Queue {
-	q := &Queue{}
-	q.n = nfqueue.NewQueue(id, q, &nfqueue.QueueConfig{MaxPackets: 5000, BufferSize: 16 * 1024 * 1024})
-	q.s = s
-	return q
-}
-
-func (o *Queue) Handle(p *nfqueue.Packet) {
-	var ip4 layers.IPv4
-	var tcp layers.TCP
-	var udp layers.UDP
-	var payload gopacket.Payload
-	parser := gopacket.NewDecodingLayerParser(layers.LayerTypeIPv4, &ip4, &tcp, &udp, &payload)
-	parser.IgnorePanic = true
-	parser.IgnoreUnsupported = true
-	decoded := make([]gopacket.LayerType, 0, 10)
-	err := parser.DecodeLayers(p.Buffer, &decoded)
-	if err != nil {
-		j.Warning("DecodeLayers err", err)
-		return
-	}
-	o.s.stats.con++
-	select {
-	case <-o.s.gg.Done():
-		if err = p.Accept(); err != nil {
-			j.Warning(err)
-		}
-	default:
-		switch {
-		case o.s.wb.W.Lookup(ip4.SrcIP):
-			if err = p.Accept(); err != nil {
-				j.Warning(err)
-			}
-			o.s.stats.wl++
-		case o.s.wb.B.Lookup(ip4.SrcIP):
-			if err = p.Drop(); err != nil {
-				j.Warning(err)
-			}
-			o.s.stats.bl++
-		default:
-			if a := o.s.rbl.Lookup(ip4.SrcIP, true); 0 < len(a) {
-				if err = p.Drop(); err != nil {
-					j.Warning(err)
-				}
-				o.s.stats.banned++
-				ip := ip4.SrcIP.To4().String()
-				id := o.s.Bl(ip, `nf`, a[0], nil)
-				if !*nolog {
-					j.Infof("blacklist: nf %v %v %v", id, ip, a[0])
-				}
-			} else {
-				if err = p.Accept(); err != nil {
-					j.Warning(err)
-				}
-				o.s.stats.accept++
-			}
-		}
-	}
-}
-
 func (o *Server) run_nf() {
 	key := o.gg.Register()
 	defer o.gg.Unregister(key)
-	q := New_queue(uint16(*queue_id), o)
-	go q.n.Start()
-	go o.expire()
 	j.Info("mode: nf")
+	go o.expire()
+	var nf *nfqueue.Nfqueue
+	var err error
+	if nf, err = nfqueue.Open(&nfqueue.Config{
+		NfQueue:      uint16(*queue_id),
+		Copymode:     nfqueue.NfQnlCopyPacket,
+		MaxQueueLen:  0xff,
+		MaxPacketLen: 0xffff,
+		ReadTimeout:  time.Second * 3,
+	}); err != nil {
+		j.Err("could not open nflog socket:", err)
+		return
+	}
+	defer func() {
+		// todo remove
+		j.Warning("before close")
+		defer j.Warning("after close")
+		if err := nf.Close(); err != nil {
+			j.Err("nf.close:", err)
+		}
+	}()
+	j.Warning("Register fn")
+	var ip4 layers.IPv4
+	parser := gopacket.NewDecodingLayerParser(layers.LayerTypeIPv4)
+	parser.SetDecodingLayerContainer(gopacket.DecodingLayerSparse(nil))
+	parser.AddDecodingLayer(&ip4)
+	parser.IgnoreUnsupported = true
+	decoded := []gopacket.LayerType{}
+	if err = nf.Register(o.gg, func(a nfqueue.Attribute) int {
+		if err = parser.DecodeLayers(*a.Payload, &decoded); err != nil {
+			j.Err("DecodeLayers err", err)
+			return 0
+		}
+		o.stats.con++
+		select {
+		case <-o.gg.Done():
+			if err = nf.SetVerdict(*a.PacketID, nfqueue.NfAccept); err != nil {
+				j.Warning(err)
+			}
+			return 1
+		default:
+			switch {
+			case o.wb.W.Lookup(ip4.SrcIP):
+				if err = nf.SetVerdict(*a.PacketID, nfqueue.NfAccept); err != nil {
+					j.Warning(err)
+				}
+				o.stats.wl++
+			case o.wb.B.Lookup(ip4.SrcIP):
+				if err = nf.SetVerdict(*a.PacketID, nfqueue.NfDrop); err != nil {
+					j.Warning(err)
+				}
+				o.stats.bl++
+			default:
+				if aa := o.rbl.Lookup(ip4.SrcIP, true); 0 < len(aa) {
+					if err = nf.SetVerdict(*a.PacketID, nfqueue.NfDrop); err != nil {
+						j.Warning(err)
+					}
+					o.stats.banned++
+					ip := ip4.SrcIP.To4().String()
+					id := o.Bl(ip, `nf`, aa[0], nil)
+					if !*nolog {
+						j.Infof("blacklist: nf %v %v %v", id, ip, aa[0])
+					}
+				} else {
+					if err = nf.SetVerdict(*a.PacketID, nfqueue.NfAccept); err != nil {
+						j.Warning(err)
+					}
+					o.stats.accept++
+				}
+			}
+		}
+		if o.gg.Err() != nil {
+			return 1
+		}
+		return 0
+	}); err != nil {
+		j.Err(err)
+		return
+	}
+	j.Warning("After register")
 	<-o.gg.Done()
-	q.n.Stop()
 }
 
 func (o *Server) expire() {

@@ -16,6 +16,7 @@ import (
 	"net"
 	"os"
 	"os/user"
+	"runtime"
 	"strings"
 )
 
@@ -34,6 +35,7 @@ var (
 	syn_mode = flag.Bool("syn", false, "mode, blocks IP by sync-recv")
 	load_f2b = flag.String("load-f2b", "", "load <full path>/fail2ban.sqlite3 and exit")
 	ver      = flag.Bool("v", false, "version")
+	gver     = flag.Bool("gv", false, "go version")
 	j        = sd.New()
 	gg       = gogroup.New(gogroup.Add_signals(gogroup.Unix))
 )
@@ -49,6 +51,11 @@ func main() {
 	if *ver {
 		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
 		j.Info(gogitver.Git())
+		return
+	}
+	if *gver {
+		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
+		j.Info(runtime.Version())
 		return
 	}
 	u, err := user.Current()
