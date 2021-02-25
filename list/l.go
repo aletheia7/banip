@@ -136,17 +136,16 @@ func (o *B) Remove(ip string) {
 	}
 }
 
-func (o *B) Expire(dur time.Duration) (expired int) {
+func (o *B) Expire(dur time.Duration) int {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	ct := len(o.ip)
 	now := time.Now()
 	for ip, ts := range o.ip {
 		if ts.Add(dur).Before(now) {
 			delete(o.ip, ip)
 		}
 	}
-	return ct - len(o.ip)
+	return o.Len()
 }
 
 func (o *B) All() (a []string) {
