@@ -183,9 +183,11 @@ func (o *Server) run_nf() {
 					j.Warning(err)
 				}
 				ip := ip4.SrcIP.To4().String()
-				id := o.Bl_update_ts(ip)
-				if !*nolog {
-					j.Infof("blacklist update: nf %v %v", id, ip)
+				id, updated := o.Bl_update_ts(ip)
+				if updated {
+					if !*nolog {
+						j.Infof("blacklist update: nf %v %v", id, ip)
+					}
 				}
 				o.stats.bl++
 			default:
@@ -389,7 +391,7 @@ func (o *Server) Bl(ip, toml string, rbl, log interface{}) (last_insert_id int64
 	return
 }
 
-func (o *Server) Bl_update_ts(ip string) (last_insert_id int64) {
+func (o *Server) Bl_update_ts(ip string) (last_insert_id int64, updated bool) {
 	i, err := list.Valid_ip_cidr(ip)
 	if err != nil {
 		j.Err(err)
@@ -413,10 +415,10 @@ func (o *Server) Bl_update_ts(ip string) (last_insert_id int64) {
 	// Only update sqlite every 24h
 	if !present {
 		j.Err("ip should be present:", s)
-		return -2
+		return
 	}
 	if old_ts.Add(time.Hour * 24).After(ts) {
-		return -1
+		return
 	}
 	o.wb.B.Add(ip, &ts)
 	res, err := o.db.ExecContext(o.gg, "update ip set ts = :ts where ip = :ip",
@@ -431,6 +433,7 @@ func (o *Server) Bl_update_ts(ip string) (last_insert_id int64) {
 	if err != nil {
 		j.Warning(err)
 	}
+	updated = true
 	return
 }
 
