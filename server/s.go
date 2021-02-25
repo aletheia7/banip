@@ -108,6 +108,7 @@ func New(gg *gogroup.Group, home string, rbls []string) *Server {
 	if err = rows.Err(); err != nil {
 		j.Err(err)
 	}
+	j.Info("ban duration:", *ban_dur)
 	j.Info("whitelist:", o.wb.W.Len())
 	j.Info("blacklist:", o.wb.B.Len())
 	j.Info("expired:", exp_ct)
