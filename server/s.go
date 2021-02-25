@@ -41,7 +41,6 @@ var (
 )
 
 const tsfmt = `2006-01-02 15:04:05-07:00`
-const tsfmthigh = `2006-01-02 15:04:05.999-07:00`
 
 type new_con struct {
 	ip net.IP
@@ -149,9 +148,6 @@ func (o *Server) run_nf() {
 		return
 	}
 	defer func() {
-		// todo remove
-		j.Warning("before close")
-		defer j.Warning("after close")
 		if err := nf.Close(); err != nil {
 			j.Err("nf.close:", err)
 		}
@@ -185,6 +181,11 @@ func (o *Server) run_nf() {
 			case o.wb.B.Lookup(ip4.SrcIP):
 				if err = nf.SetVerdict(*a.PacketID, nfqueue.NfDrop); err != nil {
 					j.Warning(err)
+				}
+				ip := ip4.SrcIP.To4().String()
+				id := o.Bl_update_ts(ip)
+				if !*nolog {
+					j.Infof("blacklist update: nf %v %v", id, ip)
 				}
 				o.stats.bl++
 			default:
@@ -365,24 +366,70 @@ func (o *Server) Bl(ip, toml string, rbl, log interface{}) (last_insert_id int64
 		j.Err("unknown value:", i)
 		return
 	}
+	if present {
+		return -1
+	}
 	ts := time.Now()
+	o.wb.B.Add(ip, &ts)
+	res, err := o.db.ExecContext(o.gg, "insert or ignore into ip(ip, ban, ts, toml, rbl, log) values(:ip, 1, :ts, :toml, :rbl, :log)",
+		sql.Named("ip", s),
+		sql.Named("ts", ts.Format(tsfmt)),
+		sql.Named("toml", toml),
+		sql.Named("rbl", rbl),
+		sql.Named("log", log),
+	)
+	if err != nil {
+		j.Err(err)
+		return
+	}
+	last_insert_id, err = res.LastInsertId()
+	if err != nil {
+		j.Warning(err)
+	}
+	return
+}
+
+func (o *Server) Bl_update_ts(ip string) (last_insert_id int64) {
+	i, err := list.Valid_ip_cidr(ip)
+	if err != nil {
+		j.Err(err)
+		return
+	}
+	var s string
+	var present bool
+	var old_ts *time.Time
+	switch t := i.(type) {
+	case *net.IP:
+		s = t.String()
+		old_ts, present = o.wb.B.Lookup_all(*t)
+	case *net.IPNet:
+		j.Err("cannot blacklist network:", ip)
+		return
+	default:
+		j.Err("unknown value:", i)
+		return
+	}
+	ts := time.Now()
+	// Only update sqlite every 24h
 	if !present {
-		o.wb.B.Add(ip, &ts)
-		res, err := o.db.ExecContext(o.gg, "insert or ignore into ip(ip, ban, ts, toml, rbl, log) values(:ip, 1, :ts, :toml, :rbl, :log)",
-			sql.Named("ip", s),
-			sql.Named("ts", time.Now().Format(tsfmt)),
-			sql.Named("toml", toml),
-			sql.Named("rbl", rbl),
-			sql.Named("log", log),
-		)
-		if err != nil {
-			j.Err(err)
-			return
-		}
-		last_insert_id, err = res.LastInsertId()
-		if err != nil {
-			j.Warning(err)
-		}
+		j.Err("ip should be present:", s)
+		return -2
+	}
+	if old_ts.Add(time.Hour * 24).After(ts) {
+		return -1
+	}
+	o.wb.B.Add(ip, &ts)
+	res, err := o.db.ExecContext(o.gg, "update ip set ts = :ts where ip = :ip",
+		sql.Named("ts", ts.Format(tsfmt)),
+		sql.Named("ip", s),
+	)
+	if err != nil {
+		j.Err(err)
+		return
+	}
+	last_insert_id, err = res.LastInsertId()
+	if err != nil {
+		j.Warning(err)
 	}
 	return
 }

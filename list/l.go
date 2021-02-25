@@ -101,21 +101,28 @@ type B struct {
 	ip map[string]*time.Time
 }
 
-func (o *B) Lookup(ip net.IP) bool {
+func (o *B) Lookup(ip net.IP) (found bool) {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
-	_, found := o.ip[ip2bin(ip)]
-	return found
+	_, found = o.ip[ip2bin(ip)]
+	return
+}
+
+func (o *B) Lookup_all(ip net.IP) (ts *time.Time, found bool) {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	ts, found = o.ip[ip2bin(ip)]
+	return
 }
 
 func (o *B) Add(ip string, ts *time.Time) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if v := net.ParseIP(ip); v == nil {
+	v := net.ParseIP(ip)
+	if v == nil {
 		return fmt.Errorf("invalid IP %v", ip)
-	} else {
-		o.ip[ip2bin(v)] = ts
 	}
+	o.ip[ip2bin(v)] = ts
 	return nil
 }
 
@@ -139,7 +146,7 @@ func (o *B) Expire(dur time.Duration) (expired int) {
 			delete(o.ip, ip)
 		}
 	}
-	return len(o.ip) - ct
+	return ct - len(o.ip)
 }
 
 func (o *B) All() (a []string) {
