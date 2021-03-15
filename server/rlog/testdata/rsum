@@ -1,0 +1,45 @@
+#!/bin/dash
+# vim: ft=sh
+#set -xv
+set -e
+db=~/banip.sqlite
+
+n=4
+while getopts n: opt ; do
+	case $opt in
+		n) n=`expr $OPTARG - 1` ;;
+		\?)
+			echo error $opt
+			exit 2
+		;;
+	esac
+done
+shift `expr $OPTIND - 1`
+
+if [ ! -f $db ] ; then
+	echo missing $db
+	exit 3
+fi
+
+q() {
+	day=`date --date="-$1 days" +%F`
+	fmt_day=`date --date="-$1 days" "+%a, %F"`
+	sqlite3 -bail -batch $db<<EOF
+	select * from (select '$fmt_day' date, action, printf("%,6d", count(*)) count, 
+	printf("%,6d%%", count(*) / cast( (select count(*) from rlog where date(t, 'localtime') = '$day') as real)  * 100) ''
+	from rlog
+	where date(t, 'localtime') = '$day'
+	group by action
+	order by action)
+	union all
+	select '', '', '', '------'
+	union all
+	select '', '', '', printf("%,6d", count(*))  from rlog
+	where date(t, 'localtime') = '$day'
+EOF
+}
+
+
+for i in `seq $n -1 0` ; do
+	q $i
+done

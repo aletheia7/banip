@@ -7,6 +7,7 @@ import (
 	"banip/filter"
 	"banip/list"
 	br "banip/rbl"
+	"banip/server/rlog"
 	"bufio"
 	"bytes"
 	"database/sql"
@@ -22,8 +23,10 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -38,6 +41,8 @@ var (
 	queue_id  = flag.Uint("queue", 77, "queue id 16 bit, needs to match nfttables rule queue num")
 	ban_dur   = flag.Duration("bdur", time.Duration(time.Hour*24*7), "ban duration, default: 7 days")
 	stats_dur = flag.Duration("stats", time.Duration(time.Hour), "stats dur, default: hourly")
+	rlog_mode = flag.Bool(`rlog`, false, `read journal, populate rlog table, blacklist IP based on rlog reject`)
+	rlog_in   = flag.String(`rlog-in`, `journal:`, `url,  use journal: | file:///<path to journal json file>`)
 )
 
 const tsfmt = `2006-01-02 15:04:05-07:00`
@@ -51,11 +56,12 @@ type Server struct {
 	gg   *gogroup.Group
 	home string
 	// 4 byte string key
-	wb    *list.WB
-	db    *sql.DB
-	rbl   *br.Search
-	rbls  []string
-	stats stat
+	wb             *list.WB
+	db             *sql.DB
+	rbl            *br.Search
+	rbls           []string
+	stats          stat
+	ins_ip, upd_ip *sql.Stmt
 	// cnew              chan *new_con
 }
 
@@ -73,6 +79,15 @@ func New(gg *gogroup.Group, home string, rbls []string) *Server {
 		rbls: rbls,
 	}
 	if o.db == nil {
+		return o
+	}
+	var err error
+	if o.ins_ip, err = o.db.PrepareContext(o.gg, "insert or ignore into ip(ip, ban, ts, toml, rbl, log) values(:ip, 1, :ts, :toml, :rbl, :log)"); err != nil {
+		j.Err(err)
+		return o
+	}
+	if o.upd_ip, err = o.db.PrepareContext(o.gg, "update ip set ts = :ts where ip = :ip"); err != nil {
+		j.Err(err)
 		return o
 	}
 	rows, err := o.db.QueryContext(o.gg, "select ip, ban, ts from ip")
@@ -123,11 +138,166 @@ var run_once sync.Once
 func (o *Server) Run(since string, nf_mode bool) {
 	run_once.Do(func() {
 		if nf_mode {
-			o.run_nf()
+			if *rlog_mode {
+				go o.run_rlog()
+			}
+			go o.run_nf()
 		} else {
 			o.run(since)
 		}
 	})
+}
+
+func (o *Server) run_rlog() {
+	key := o.gg.Register()
+	defer o.gg.Unregister(key)
+	j.Info("rlog:", *rlog_in)
+	u, err := url.Parse(*rlog_in)
+	if err != nil {
+		j.Err(err)
+		return
+	}
+	var (
+		c        chan *rlog.Log
+		ins      *sql.Stmt
+		sql_text = `
+insert or replace into rlog(
+	score, max_score, mfrom, ip, uid, t, is_spam, action, forced_action, mid, user, smtp_from, smtp_rcpts, subject, asn, ipnet, country, ssp, len, time_real, time_virtual, dns_req, digest, mime_rcpts, filename, qid, settings_id, cursor
+	)
+values(
+	:score, :max_score, :mfrom, :ip, :uid, :t, :is_spam, :action, :forced_action, :mid, :user, :smtp_from, :smtp_rcpts, :subject, :asn, :ipnet, :country, :ssp, :len, :time_real, :time_virtual, :dns_req, :digest, :mime_rcpts, :filename, :qid, :settings_id, :cursor
+	)
+	`
+		l  *rlog.Log
+		ok bool
+		ct int
+	)
+	if u.Scheme == `journal` {
+		var last_cursor string
+		err = o.db.QueryRowContext(o.gg, `with m as (select max(rowid) rowid from rlog) select r.cursor from rlog r inner join m on (r.rowid = m.rowid)`).Scan(&last_cursor)
+		switch {
+		case err == sql.ErrNoRows:
+		case err == nil:
+		default:
+			j.Err(err)
+			return
+		}
+		if len(last_cursor) == 0 {
+			j.Warningf("load banip.sqlite rlog table with rlog-in file://<t.json> and 'journalctl -S 2021-02-19 -a -t rspamd PRIORITY=7 --output json --output-fields MESSAGE' > t.json")
+			return
+		}
+		j.Info("cursor:", last_cursor)
+		cmd := exec.CommandContext(o.gg, `journalctl`, []string{
+			`-n`, `all`,
+			`-af`,
+			`-t`, `rspamd`,
+			`--output`, `export`,
+			`--output-fields`, `MESSAGE`,
+			`--after-cursor`, last_cursor,
+			`PRIORITY=7`,
+		}...)
+		so, err := cmd.StdoutPipe()
+		if err != nil {
+			j.Err(err)
+			return
+		}
+		defer so.Close()
+		if err = cmd.Start(); err != nil {
+			j.Err(err)
+			return
+		}
+		defer cmd.Wait()
+		c = rlog.New_listener(o.gg, so)
+		ins, err = o.db.PrepareContext(o.gg, sql_text)
+		if err != nil {
+			j.Err(err)
+			return
+		}
+	} else {
+		fp, err := os.Open(u.Path)
+		if err != nil {
+			j.Err(err)
+			return
+		}
+		defer fp.Close()
+		c = rlog.New_listener(o.gg, fp)
+		ins, err = o.db.PrepareContext(o.gg, sql_text)
+		if err != nil {
+			j.Err(err)
+			return
+		}
+	}
+	for {
+		select {
+		case <-o.gg.Done():
+			return
+		case l, ok = <-c:
+			if !ok {
+				defer j.Info("rlog count:", ct)
+				return
+			}
+			ct++
+			user := &sql.NullString{l.User, true}
+			if len(user.String) == 0 {
+				user.Valid = false
+			}
+			filename := &sql.NullString{l.Filename, true}
+			if len(filename.String) == 0 {
+				filename.Valid = false
+			}
+			qid := &sql.NullString{l.Qid, true}
+			if len(qid.String) == 0 {
+				qid.Valid = false
+			}
+			if _, err = ins.ExecContext(o.gg,
+				sql.Named(`score`, l.Score),
+				sql.Named(`max_score`, l.Max_score),
+				sql.Named(`mfrom`, l.From),
+				sql.Named(`ip`, l.Ip.String()),
+				sql.Named(`uid`, l.Uid),
+				sql.Named(`t`, l.Sqlt()),
+				sql.Named(`is_spam`, l.Is_spam),
+				sql.Named(`action`, l.Action),
+				sql.Named(`forced_action`, l.Forced_action),
+				sql.Named(`mid`, l.Mid),
+				sql.Named(`user`, user),
+				sql.Named(`smtp_from`, l.Smtp_from),
+				sql.Named(`smtp_rcpts`, l.Smtp_rcpts),
+				sql.Named(`subject`, l.Subject),
+				sql.Named(`asn`, l.Asn),
+				sql.Named(`ipnet`, l.Ipnet),
+				sql.Named(`country`, l.Country),
+				sql.Named(`ssp`, l.Ssp),
+				sql.Named(`len`, l.Len),
+				sql.Named(`time_real`, l.Time_real.String()),
+				sql.Named(`time_virtual`, l.Time_virtual.String()),
+				sql.Named(`dns_req`, l.Dns_req),
+				sql.Named(`digest`, l.Digest),
+				sql.Named(`mime_rcpts`, l.Mime_rcpts),
+				sql.Named(`filename`, filename),
+				sql.Named(`qid`, l.Qid),
+				sql.Named(`settings_id`, l.Settings_id),
+				sql.Named(`cursor`, l.Cursor),
+			); err != nil {
+				if o.gg.Err() != nil {
+					return
+				}
+				j.Err(err)
+				return
+			}
+			if o.wb.W.Lookup(l.Ip) {
+				continue
+			}
+			if l.Action != `reject` {
+				continue
+			}
+			if o.wb.B.Lookup(l.Ip) {
+				o.Bl_update_ts(l.Ip.String(), l.T)
+			} else {
+				o.Bl(l.Ip.String(), `rlog`, ``, ``, l.T)
+			}
+		}
+	}
 }
 
 func (o *Server) run_nf() {
@@ -152,7 +322,6 @@ func (o *Server) run_nf() {
 			j.Err("nf.close:", err)
 		}
 	}()
-	j.Warning("Register fn")
 	var ip4 layers.IPv4
 	parser := gopacket.NewDecodingLayerParser(layers.LayerTypeIPv4)
 	parser.SetDecodingLayerContainer(gopacket.DecodingLayerSparse(nil))
@@ -183,7 +352,7 @@ func (o *Server) run_nf() {
 					j.Warning(err)
 				}
 				ip := ip4.SrcIP.To4().String()
-				id, updated := o.Bl_update_ts(ip)
+				id, updated := o.Bl_update_ts(ip, time.Now())
 				if updated {
 					if !*nolog {
 						j.Infof("blacklist update: nf %v %v", id, ip)
@@ -197,7 +366,7 @@ func (o *Server) run_nf() {
 					}
 					o.stats.banned++
 					ip := ip4.SrcIP.To4().String()
-					id := o.Bl(ip, `nf`, aa[0], nil)
+					id := o.Bl(ip, `nf`, aa[0], nil, time.Now())
 					if !*nolog {
 						j.Infof("blacklist: nf %v %v %v", id, ip, aa[0])
 					}
@@ -217,7 +386,6 @@ func (o *Server) run_nf() {
 		j.Err(err)
 		return
 	}
-	j.Warning("After register")
 	<-o.gg.Done()
 }
 
@@ -267,7 +435,7 @@ func (o *Server) run(since string) {
 								rbl_found = a[0]
 							}
 						}
-						id := o.Bl(a.Ip, a.Toml, rbl_found, a.Msg)
+						id := o.Bl(a.Ip, a.Toml, rbl_found, a.Msg, time.Now())
 						if !*nolog {
 							j.Infof("blacklist: %v %v %v %v", a.Toml, id, a.Ip, rbl_found)
 						}
@@ -349,7 +517,7 @@ func (o *Server) Q(ip string) {
 	}
 }
 
-func (o *Server) Bl(ip, toml string, rbl, log interface{}) (last_insert_id int64) {
+func (o *Server) Bl(ip, toml string, rbl, log interface{}, ts time.Time) (last_insert_id int64) {
 	i, err := list.Valid_ip_cidr(ip)
 	if err != nil {
 		j.Err(err)
@@ -371,9 +539,8 @@ func (o *Server) Bl(ip, toml string, rbl, log interface{}) (last_insert_id int64
 	if present {
 		return -1
 	}
-	ts := time.Now()
 	o.wb.B.Add(ip, &ts)
-	res, err := o.db.ExecContext(o.gg, "insert or ignore into ip(ip, ban, ts, toml, rbl, log) values(:ip, 1, :ts, :toml, :rbl, :log)",
+	res, err := o.ins_ip.ExecContext(o.gg,
 		sql.Named("ip", s),
 		sql.Named("ts", ts.Format(tsfmt)),
 		sql.Named("toml", toml),
@@ -391,7 +558,8 @@ func (o *Server) Bl(ip, toml string, rbl, log interface{}) (last_insert_id int64
 	return
 }
 
-func (o *Server) Bl_update_ts(ip string) (last_insert_id int64, updated bool) {
+// Check ip existence before update
+func (o *Server) Bl_update_ts(ip string, ts time.Time) (last_insert_id int64, updated bool) {
 	i, err := list.Valid_ip_cidr(ip)
 	if err != nil {
 		j.Err(err)
@@ -411,7 +579,6 @@ func (o *Server) Bl_update_ts(ip string) (last_insert_id int64, updated bool) {
 		j.Err("unknown value:", i)
 		return
 	}
-	ts := time.Now()
 	// Only update sqlite every 24h
 	if !present {
 		j.Err("ip should be present:", s)
@@ -421,7 +588,7 @@ func (o *Server) Bl_update_ts(ip string) (last_insert_id int64, updated bool) {
 		return
 	}
 	o.wb.B.Add(ip, &ts)
-	res, err := o.db.ExecContext(o.gg, "update ip set ts = :ts where ip = :ip",
+	res, err := o.upd_ip.ExecContext(o.gg,
 		sql.Named("ts", ts.Format(tsfmt)),
 		sql.Named("ip", s),
 	)
@@ -505,7 +672,15 @@ func (o *Server) run_filter(bus *mbus.Bus, since string) {
 }
 
 func get_database(gg *gogroup.Group, home string) *sql.DB {
-	db, err := sql.Open("sqlite3", "file://"+home+"/"+*sqlite+"?"+strings.Join([]string{"_journal=wal", "_fk=1", "_timeout=30000"}, `&`))
+	db, err := sql.Open(`sqlite3`, (&url.URL{
+		Scheme: `file`,
+		Path:   path.Join(home, *sqlite),
+		RawQuery: url.Values{
+			`_journal`: []string{`wal`},
+			`_fk`:      []string{`1`},
+			`_timeout`: []string{`30000`},
+		}.Encode(),
+	}).String())
 	if err != nil {
 		j.Err(err)
 		return nil

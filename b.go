@@ -18,6 +18,7 @@ import (
 	"os/user"
 	"runtime"
 	"strings"
+	"time"
 )
 
 var (
@@ -77,7 +78,7 @@ func main() {
 	case 0 < len(*blip):
 		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
 		j.Info("blip:", *blip)
-		server.New(gg, u.HomeDir, rbls).Bl(*blip, "blip", nil, nil)
+		server.New(gg, u.HomeDir, rbls).Bl(*blip, "blip", nil, nil, time.Now())
 		gg.Cancel()
 		return
 	case 0 < len(*rmip):
