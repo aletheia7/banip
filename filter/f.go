@@ -4,20 +4,21 @@
 package filter
 
 import (
-	"banip/list"
-	br "banip/rbl"
 	"bytes"
 	"flag"
 	"fmt"
-	"github.com/BurntSushi/toml"
-	"github.com/aletheia7/gogroup"
-	"github.com/aletheia7/mbus"
-	"github.com/aletheia7/sd"
 	"net"
 	"path"
 	"regexp"
 	"strings"
 	"text/template"
+
+	"github.com/BurntSushi/toml"
+	"github.com/aletheia7/banip/list"
+	br "github.com/aletheia7/banip/rbl"
+	"github.com/aletheia7/gogroup/v2"
+	"github.com/aletheia7/mbus"
+	"github.com/aletheia7/sd/v6"
 )
 
 var (

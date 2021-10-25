@@ -1,11 +1,12 @@
 package rlog
 
 import (
-	"github.com/aletheia7/gogroup"
 	"io/ioutil"
 	"os"
 	"regexp"
 	"testing"
+
+	"github.com/aletheia7/gogroup/v2"
 )
 
 var gg = gogroup.New(gogroup.Add_signals(gogroup.Unix))

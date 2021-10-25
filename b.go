@@ -4,21 +4,21 @@
 package main
 
 import (
-	"banip/filter"
-	br "banip/rbl"
-	"banip/server"
-	"banip/syn"
 	"flag"
-	"github.com/aletheia7/gogroup"
-	"github.com/aletheia7/mbus"
-	"github.com/aletheia7/sd"
-	"gogitver"
+	br "github.com/aletheia7/banip/rbl"
 	"net"
 	"os"
 	"os/user"
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/aletheia7/banip/filter"
+	"github.com/aletheia7/banip/server"
+	"github.com/aletheia7/banip/syn"
+	"github.com/aletheia7/gogroup/v2"
+	"github.com/aletheia7/mbus"
+	"github.com/aletheia7/sd/v6"
 )
 
 var (
@@ -39,6 +39,7 @@ var (
 	gver     = flag.Bool("gv", false, "go version")
 	j        = sd.New()
 	gg       = gogroup.New(gogroup.Add_signals(gogroup.Unix))
+	Gtag     string
 )
 
 const tsfmt = `2006-01-02 15:04:05-07:00`
@@ -51,7 +52,7 @@ func main() {
 	rbls = strings.Split(*rbls_in, ",")
 	if *ver {
 		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
-		j.Info(gogitver.Git())
+		j.Info(Gtag)
 		return
 	}
 	if *gver {
@@ -133,7 +134,7 @@ func main() {
 			if srv == nil {
 				srv = server.New(gg, u.HomeDir, rbls)
 			}
-			j.Info("version:", gogitver.Git())
+			j.Info("version:", Gtag)
 			srv.Run(*since, *nf_mode)
 		}
 		if !good {

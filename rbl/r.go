@@ -1,10 +1,11 @@
 package rbl
 
 import (
-	"github.com/aletheia7/gogroup"
-	"github.com/aletheia7/sd"
 	"net"
 	"strings"
+
+	"github.com/aletheia7/gogroup/v2"
+	"github.com/aletheia7/sd/v6"
 )
 
 var j = sd.New()

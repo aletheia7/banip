@@ -4,23 +4,12 @@
 package server
 
 import (
-	"banip/filter"
-	"banip/list"
-	br "banip/rbl"
-	"banip/server/rlog"
 	"bufio"
 	"bytes"
 	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/aletheia7/gogroup"
-	"github.com/aletheia7/mbus"
-	"github.com/aletheia7/sd"
-	nfqueue "github.com/florianl/go-nfqueue"
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
-	_ "github.com/mattn/go-sqlite3"
 	"io"
 	"net"
 	"net/url"
@@ -31,6 +20,18 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/aletheia7/banip/filter"
+	"github.com/aletheia7/banip/list"
+	br "github.com/aletheia7/banip/rbl"
+	"github.com/aletheia7/banip/server/rlog"
+	"github.com/aletheia7/gogroup/v2"
+	"github.com/aletheia7/mbus"
+	"github.com/aletheia7/sd/v6"
+	nfqueue "github.com/florianl/go-nfqueue"
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 var (

@@ -1,16 +1,17 @@
 package syn
 
 import (
-	"banip/server"
 	"bytes"
 	"flag"
 	"fmt"
-	"github.com/aletheia7/gogroup"
-	"github.com/aletheia7/sd"
 	"net"
 	"os/exec"
 	"sync"
 	"time"
+
+	"github.com/aletheia7/banip/server"
+	"github.com/aletheia7/gogroup/v2"
+	"github.com/aletheia7/sd/v6"
 )
 
 var (

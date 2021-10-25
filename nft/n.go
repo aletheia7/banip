@@ -5,10 +5,11 @@ package nft
 
 import (
 	"fmt"
-	"github.com/aletheia7/sd"
 	"os/exec"
 	"regexp"
 	"strings"
+
+	"github.com/aletheia7/sd/v6"
 )
 
 var j = sd.New()

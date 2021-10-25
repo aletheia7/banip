@@ -4,13 +4,14 @@ import (
 	"banip/rlog"
 	"database/sql"
 	"flag"
-	"github.com/aletheia7/gogroup"
-	"github.com/aletheia7/sd"
-	_ "github.com/mattn/go-sqlite3"
 	"io/ioutil"
 	"net/url"
 	"os"
 	"path"
+
+	"github.com/aletheia7/gogroup/v2"
+	"github.com/aletheia7/sd/v6"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 var (
