@@ -11,7 +11,7 @@ require (
 	github.com/florianl/go-nfqueue v1.3.0
 	github.com/google/gopacket v1.1.19
 	github.com/magefile/mage v1.11.0
-	github.com/mattn/go-sqlite3 v1.14.6
+	github.com/mattn/go-sqlite3 v1.14.9
 )
 
 require (
