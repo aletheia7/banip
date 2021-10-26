@@ -400,7 +400,7 @@ func (o *Server) expire() {
 		case <-time.After(*stats_dur):
 			j.Infof("new cons: %v, new bans: %v, wl: %v, bl: %v, accept: %v\n", o.stats.con, o.stats.banned, o.stats.wl, o.stats.bl, o.stats.accept)
 			o.stats = stat{}
-		case <-time.After(time.Hour * 24):
+		case <-time.After(time.Hour):
 			j.Info("begin expire:", o.wb.B.Len())
 			j.Info("end expire:", o.wb.B.Expire(*ban_dur))
 		}
@@ -580,12 +580,12 @@ func (o *Server) Bl_update_ts(ip string, ts time.Time) (last_insert_id int64, up
 		j.Err("unknown value:", i)
 		return
 	}
-	// Only update sqlite every 24h
+	// Only update sqlite every 10 minutes
 	if !present {
 		j.Err("ip should be present:", s)
 		return
 	}
-	if old_ts.Add(time.Hour * 24).After(ts) {
+	if old_ts.Add(time.Minute * 10).After(ts) {
 		return
 	}
 	o.wb.B.Add(ip, &ts)
