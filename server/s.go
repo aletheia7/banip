@@ -673,9 +673,16 @@ func (o *Server) run_filter(bus *mbus.Bus, since string) {
 }
 
 func get_database(gg *gogroup.Group, home string) *sql.DB {
+	db_file := path.Join(home, `db`, *sqlite)
+	dir := path.Dir(db_file)
+	if _, err := os.Stat(dir); err != nil {
+		j.Err(err, dir)
+		gg.Cancel()
+		return nil
+	}
 	db, err := sql.Open(`sqlite3`, (&url.URL{
 		Scheme: `file`,
-		Path:   path.Join(home, *sqlite),
+		Path:   db_file,
 		RawQuery: url.Values{
 			`_journal`: []string{`wal`},
 			`_fk`:      []string{`1`},
