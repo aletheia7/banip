@@ -6,10 +6,10 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/aletheia7/gogroup/v2"
+	"github.com/aletheia7/gogroup"
 )
 
-var gg = gogroup.New(gogroup.Add_signals(gogroup.Unix))
+var gg = gogroup.New()
 
 func Test_read(t *testing.T) {
 	const fn = `testdata/t.json`

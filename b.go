@@ -5,7 +5,6 @@ package main
 
 import (
 	"flag"
-	br "github.com/aletheia7/banip/rbl"
 	"net"
 	"os"
 	"os/user"
@@ -13,10 +12,12 @@ import (
 	"strings"
 	"time"
 
+	br "github.com/aletheia7/banip/rbl"
+
 	"github.com/aletheia7/banip/filter"
 	"github.com/aletheia7/banip/server"
 	"github.com/aletheia7/banip/syn"
-	"github.com/aletheia7/gogroup/v2"
+	"github.com/aletheia7/gogroup"
 	"github.com/aletheia7/mbus"
 	"github.com/aletheia7/sd/v6"
 )
@@ -38,11 +39,9 @@ var (
 	ver      = flag.Bool("v", false, "version")
 	gver     = flag.Bool("gv", false, "go version")
 	j        = sd.New()
-	gg       = gogroup.New(gogroup.Add_signals(gogroup.Unix))
+	gg       = gogroup.New()
 	Gtag     string
 )
-
-const tsfmt = `2006-01-02 15:04:05-07:00`
 
 func main() {
 	flag.Parse()
@@ -101,7 +100,7 @@ func main() {
 	case 0 < len(*test):
 		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
 		j.Info("test:", *test)
-		bus := mbus.New_bus(gg)
+		bus := mbus.New_bus(gg, j)
 		if f, err := filter.New(gg, bus, *test, server.New(gg, u.HomeDir, rbls).WB(), rbls); err == nil {
 			go server.Journal(gg, bus, true, f.Tag, *since)
 		} else {
@@ -112,7 +111,7 @@ func main() {
 	case 0 < len(*testdata):
 		j.Option(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
 		j.Info("testdata:", *testdata)
-		bus := mbus.New_bus(gg)
+		bus := mbus.New_bus(gg, j)
 		if f, err := filter.New(gg, bus, *testdata, server.New(gg, u.HomeDir, rbls).WB(), rbls); err == nil {
 			f.Testdata()
 		} else {

@@ -1,5 +1,6 @@
 // Copyright 2021 aletheia7. All rights reserved. Use of this source code is
 // governed by a BSD-2-Clause license that can be found in the LICENSE file.
+//go:build mage
 // +build mage
 
 package main
@@ -26,5 +27,5 @@ func Clean() error {
 
 // go install
 func Install() error {
-	return sh.RunV("go", "install", "-v", `-ldflags`, gitmage.Git())
+	return sh.RunV("go", "install", "-v", "-trimpath", `-ldflags`, "-s -w "+gitmage.Git())
 }

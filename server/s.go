@@ -25,7 +25,7 @@ import (
 	"github.com/aletheia7/banip/list"
 	br "github.com/aletheia7/banip/rbl"
 	"github.com/aletheia7/banip/server/rlog"
-	"github.com/aletheia7/gogroup/v2"
+	"github.com/aletheia7/gogroup"
 	"github.com/aletheia7/mbus"
 	"github.com/aletheia7/sd/v6"
 	nfqueue "github.com/florianl/go-nfqueue"
@@ -47,11 +47,6 @@ var (
 )
 
 const tsfmt = `2006-01-02 15:04:05-07:00`
-
-type new_con struct {
-	ip net.IP
-	ts time.Time
-}
 
 type Server struct {
 	gg   *gogroup.Group
@@ -410,7 +405,7 @@ func (o *Server) expire() {
 func (o *Server) run(since string) {
 	key := o.gg.Register()
 	defer o.gg.Unregister(key)
-	bus := mbus.New_bus(o.gg)
+	bus := mbus.New_bus(o.gg, j)
 	c := make(chan *mbus.Msg, 256)
 	bus.Subscribe(c, filter.T_bl)
 	defer bus.Unsubscribe(c, filter.T_bl)
@@ -787,7 +782,6 @@ func Journal(gg *gogroup.Group, bus *mbus.Bus, test bool, tag []string, since st
 		defer wp.Close()
 		cmd.Wait()
 	}()
-	return
 }
 
 func Load_fail2ban(gg *gogroup.Group, f2bdb, home string) {

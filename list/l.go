@@ -87,7 +87,6 @@ func (o *W) Remove(ip string) {
 	} else {
 		delete(o.ip, ip2bin(v))
 	}
-	return
 }
 
 func (o *W) Len() int {

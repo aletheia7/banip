@@ -8,11 +8,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
-
-	"github.com/aletheia7/sd/v6"
 )
-
-var j = sd.New()
 
 const Rule_marker = " ☢ ban ☢ "
 

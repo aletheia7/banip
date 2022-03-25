@@ -38,7 +38,7 @@ func New(ctx context.Context, r io.Reader, opt ...option) (chan Entry, Error) {
 		defer close(o.C)
 		scanner := bufio.NewScanner(r)
 		if 0 < o.buffer_size {
-			scanner.Buffer(make([]byte, o.buffer_size, o.buffer_size), o.buffer_size)
+			scanner.Buffer(make([]byte, o.buffer_size), o.buffer_size)
 		}
 		scanner.Split(o.Split)
 		for scanner.Scan() && ctx.Err() == nil {

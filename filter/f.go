@@ -16,7 +16,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/aletheia7/banip/list"
 	br "github.com/aletheia7/banip/rbl"
-	"github.com/aletheia7/gogroup/v2"
+	"github.com/aletheia7/gogroup"
 	"github.com/aletheia7/mbus"
 	"github.com/aletheia7/sd/v6"
 )
@@ -95,9 +95,7 @@ func New(gg *gogroup.Group, bus *mbus.Bus, fn string, list *list.WB, rbls []stri
 		return nil, err
 	}
 	o.subs = make([]string, 0, len(o.Tag)+1)
-	for _, t := range o.Tag {
-		o.subs = append(o.subs, t)
-	}
+	o.subs = append(o.subs, o.Tag...)
 	o.subs = append(o.subs, T_test)
 	o.bus.Subscribe(o.c, o.subs...)
 	go o.run()
@@ -280,20 +278,20 @@ func (o *Filter) UnmarshalTOML(data interface{}) error {
 		case "re":
 			a, ok := v.([]interface{})
 			if !ok {
-				return fmt.Errorf("not an array:", k)
+				return fmt.Errorf("not an array: %v", k)
 			}
 			o.Re = make([]*regexp.Regexp, 0, len(a))
 			for i, rev := range a {
 				s, ok := rev.(string)
 				if !ok {
-					return fmt.Errorf("re[%v] is not a string:", i, rev)
+					return fmt.Errorf("re[%v] is not a string: %v", i, rev)
 				}
-				if -1 == strings.Index(s, ipv4var) {
+				if !strings.Contains(s, ipv4var) {
 					return fmt.Errorf("missing in re: %v %s", ipv4var, s)
 				}
 				t, err := template.New(``).Parse(s)
 				if err != nil {
-					return fmt.Errorf("cannot make template:", err, s)
+					return fmt.Errorf("cannot make template: %v, %v", err, s)
 				}
 				var reb bytes.Buffer
 				if err := t.Execute(&reb, map[string]string{"Ipv4": ipv4re}); err != nil {
@@ -309,13 +307,13 @@ func (o *Filter) UnmarshalTOML(data interface{}) error {
 		case "ignore":
 			a, ok := v.([]interface{})
 			if !ok {
-				return fmt.Errorf("not an array:", k)
+				return fmt.Errorf("not an array: %v", k)
 			}
 			o.Ignore = make([]*regexp.Regexp, 0, len(a))
 			for i, rev := range a {
 				s, ok := rev.(string)
 				if !ok {
-					return fmt.Errorf("re[%v] is not a string:", i, rev)
+					return fmt.Errorf("re[%v] is not a string: %v", i, rev)
 				}
 				if ignore, err := regexp.Compile(s); err == nil {
 					o.Ignore = append(o.Ignore, ignore)
@@ -326,18 +324,18 @@ func (o *Filter) UnmarshalTOML(data interface{}) error {
 		case "testdata":
 			a, ok := v.([]interface{})
 			if !ok {
-				return fmt.Errorf("not an array:", k)
+				return fmt.Errorf("not an array: %v", k)
 			}
 			o.testdata = make([]string, 0, len(a))
 			for i, dv := range a {
 				s, ok := dv.(string)
 				if !ok {
-					return fmt.Errorf("testdata[%v] is not a string:", i, dv)
+					return fmt.Errorf("testdata[%v] is not a string: %v", i, dv)
 				}
 				o.testdata = append(o.testdata, s)
 			}
 		default:
-			e := fmt.Errorf("unknown key: %v, v: %#v\n", k, v)
+			e := fmt.Errorf("unknown key: %v, v: %#v", k, v)
 			j.Err(e)
 			return e
 		}

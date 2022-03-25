@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/aletheia7/banip/server/rlog/jep"
-	"github.com/aletheia7/gogroup/v2"
+	"github.com/aletheia7/gogroup"
 	"github.com/aletheia7/sd/v6"
 )
 

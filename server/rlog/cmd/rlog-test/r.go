@@ -1,7 +1,6 @@
 package main
 
 import (
-	"banip/rlog"
 	"database/sql"
 	"flag"
 	"io/ioutil"
@@ -9,15 +8,15 @@ import (
 	"os"
 	"path"
 
-	"github.com/aletheia7/gogroup/v2"
+	"github.com/aletheia7/banip/server/rlog"
+	"github.com/aletheia7/gogroup"
 	"github.com/aletheia7/sd/v6"
 	_ "github.com/mattn/go-sqlite3"
 )
 
 var (
 	j          = sd.New(sd.Set_default_disable_journal(true), sd.Set_default_writer_stdout())
-	gg         = gogroup.New(gogroup.Add_signals(gogroup.Unix))
-	max_size   = 100_000_000
+	gg         = gogroup.New()
 	make_table = flag.Bool(`make-table`, false, `issue create table, etc.`)
 	test_db    = flag.String(`db`, `banip-rlog.sqlite`, ``)
 )
