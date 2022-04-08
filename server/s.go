@@ -184,13 +184,14 @@ values(
 		}
 		j.Info("cursor:", last_cursor)
 		cmd := exec.CommandContext(o.gg, `journalctl`, []string{
+			`--no-pager`,
 			`-n`, `all`,
+			`-p`, `7`,
 			`-af`,
 			`-t`, `rspamd`,
 			`--output`, `export`,
 			`--output-fields`, `MESSAGE`,
 			`--after-cursor`, last_cursor,
-			`PRIORITY=7`,
 		}...)
 		so, err := cmd.StdoutPipe()
 		if err != nil {
